@@ -1,0 +1,17 @@
+{
+  "name": "pixie",
+  "version": "0.1.0",
+  "builtin-baseline": "7ebe9ffa933558af0c2fec88a1cdd5972fdcb51c",
+  "dependencies": [
+    "sdl3",
+    "stb",
+    "nativefiledialog-extended",
+    {
+      "name": "imgui",
+      "features": [
+        "sdl3-binding",
+        "sdl3-renderer-binding"
+      ]
+    }
+  ]
+}
