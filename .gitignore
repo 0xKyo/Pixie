@@ -3,5 +3,7 @@ out/
 vcpkg_installed/
 .vs/
 .vscode/
+.claude/
 CMakeUserPresets.json
 *.user
+imgui.ini
