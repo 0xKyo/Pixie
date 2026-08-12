@@ -1,7 +1,8 @@
 # Pixie
 
-A pixel art image converter. It loads an image in any common format, and
-remaps every pixel to the closest color in a chosen color palette using the
+A pixel art image converter. Load an image in any common format, optionally
+remove its background, crop it, shrink it down to a pixel-art resolution, and
+remap every pixel to the closest color in a chosen palette — all via the
 CIEDE2000 perceptual color-difference formula.
 
 - Rendering / windowing: SDL3
@@ -10,10 +11,28 @@ CIEDE2000 perceptual color-difference formula.
 - Palettes: GIMP `.gpl` files
 - File dialogs: Native File Dialog Extended (native OS open/save dialogs)
 
+## Features
+
+- **Palette conversion** — every pixel is remapped to its closest color in
+  the loaded palette, measured with CIEDE2000 in CIE L\*a\*b\* space. If no
+  palette is loaded, Convert still runs the other steps below and passes
+  colors through unchanged.
+- **Remove Background** — flood-fills the background inward from the image
+  border (CIEDE2000 within a tolerance), forcing it transparent. Click the
+  source preview to include/exclude a region (magic wand).
+- **Crop** — auto-detects a tight bounding box around the subject (reusing
+  the same background detection), with draggable handles on the source
+  preview to adjust it by hand.
+- **Downscale** — shrinks the image to a pixel-art width (16/32/64/128px,
+  height keeps the aspect ratio) using coverage-weighted box-filter
+  averaging, which keeps silhouettes legible without the noise nearest-
+  neighbor sampling would introduce. A checkbox controls whether the palette
+  swap happens before or after the shrink, so both orders can be compared.
+
 ## Prerequisites
 
-- **Visual Studio 2022** with the "Desktop development with C++" workload
-  (make sure "C++ CMake tools for Windows" is checked).
+- **Visual Studio 2022 or newer** with the "Desktop development with C++"
+  workload (make sure "C++ CMake tools for Windows" is checked).
 - **[vcpkg](https://github.com/microsoft/vcpkg)**, with the `VCPKG_ROOT`
   environment variable pointing at your vcpkg checkout. If you don't have it:
 
@@ -58,18 +77,28 @@ cmake -B build/vs -G "Visual Studio 17 2022" -A x64 -DCMAKE_TOOLCHAIN_FILE="$env
 ## Usage
 
 1. **Open Image...** — load the source image (PNG, JPEG, BMP, TGA, GIF, PSD, HDR, ...).
-2. **Open Palette (.gpl)...** — load a GIMP palette file. A sample palette is
-   included at `assets/palettes/pico-8.gpl`.
-3. **Convert** — remaps every source pixel to its closest palette color
-   (CIEDE2000 distance in CIE L\*a\*b\* space), using all available CPU cores.
-4. **Save Result As PNG...** — write the converted image out.
+2. **Open Palette (.gpl)...** — optional. Sample palettes are included at
+   `assets/palettes/pico-8.gpl` and `assets/palettes/apollo.gpl`.
+3. In the sidebar, enable whichever **Tools** you want (Remove Background,
+   Crop, Downscale) and adjust their settings; the source preview updates live.
+4. **Convert** — runs the enabled steps on a background thread, in the order
+   shown in the sidebar.
+5. **Save Result As PNG...** — write the converted image out.
 
 ## Project layout
 
 ```
 src/
-  core/        Palette (.gpl) parsing, image IO, sRGB<->Lab + CIEDE2000, converter
+  core/        Image IO, Palette (.gpl) parsing, sRGB<->Lab + CIEDE2000,
+               background Mask, Crop, Downscale, palette Converter
   app/         SDL3 window/renderer, Dear ImGui UI, texture upload helpers
   main.cpp
-assets/palettes/  Sample .gpl palettes
+assets/
+  source/      Sample source image
+  palettes/    Sample .gpl palettes
+  converted/   Default save-to location
 ```
+
+## License
+
+MIT — see [LICENSE](LICENSE).

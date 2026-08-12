@@ -44,12 +44,9 @@ void ConvertImage(const Image& src, const Palette& palette, Image& dst, const Co
     if (src.Empty()) {
         return;
     }
-    if (palette.Empty()) {
-        std::copy_n(src.Pixels(), static_cast<size_t>(src.Width()) * src.Height(), dst.Pixels());
-        return;
-    }
 
     const std::vector<PaletteColor>& colors = palette.Colors();
+    const bool hasPalette = !colors.empty();
     const int width = src.Width();
     const int height = src.Height();
 
@@ -67,12 +64,12 @@ void ConvertImage(const Image& src, const Palette& palette, Image& dst, const Co
         if (rowStart >= rowEnd) {
             continue;
         }
-        workers.emplace_back([&src, &dst, &colors, width, rowStart, rowEnd]() {
+        workers.emplace_back([&src, &dst, &colors, hasPalette, width, rowStart, rowEnd]() {
             std::unordered_map<uint32_t, RGB8> cache;
             for (int y = rowStart; y < rowEnd; ++y) {
                 for (int x = 0; x < width; ++x) {
                     const RGB8 srcPixel = src.GetPixel(x, y);
-                    RGB8 out = FindNearest(srcPixel, colors, cache);
+                    RGB8 out = hasPalette ? FindNearest(srcPixel, colors, cache) : srcPixel;
                     out.a = srcPixel.a;
                     dst.SetPixel(x, y, out);
                 }

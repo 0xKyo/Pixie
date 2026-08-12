@@ -64,9 +64,8 @@ Lab RgbToLab(RGB8 color) {
     return lab;
 }
 
-// Reference implementation of CIEDE2000, following Sharma, Wu & Dalal (2005),
-// "The CIEDE2000 Color-Difference Formula: Implementation Notes, Supplementary
-// Test Data, and Mathematical Observations".
+// Reference implementation of CIEDE2000 (Sharma, Wu & Dalal 2005),
+// "The CIEDE2000 Color-Difference Formula: Implementation Notes".
 double Ciede2000(const Lab& lab1, const Lab& lab2) {
     constexpr double kL = 1.0;
     constexpr double kC = 1.0;

@@ -28,7 +28,6 @@ public:
     [[nodiscard]] bool Empty() const { return pixels_.empty(); }
 
     [[nodiscard]] const RGB8* Pixels() const { return pixels_.data(); }
-    [[nodiscard]] RGB8* Pixels() { return pixels_.data(); }
 
     [[nodiscard]] RGB8 GetPixel(int x, int y) const { return pixels_[static_cast<size_t>(y) * width_ + x]; }
     void SetPixel(int x, int y, RGB8 color) { pixels_[static_cast<size_t>(y) * width_ + x] = color; }

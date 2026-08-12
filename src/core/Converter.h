@@ -10,9 +10,8 @@ struct ConvertOptions {
     unsigned threadCount = 0;
 };
 
-// Converts `src` into `dst` by replacing every pixel with the closest color in
-// `palette`, measured with the CIEDE2000 perceptual color difference. `dst` is
-// resized to match `src`. Source alpha is preserved on the output pixels.
+// Replaces each pixel with its closest CIEDE2000 match in `palette` (pixels
+// pass through unchanged if `palette` is empty). Alpha is preserved; `dst` is resized to match `src`.
 void ConvertImage(const Image& src, const Palette& palette, Image& dst, const ConvertOptions& opts = {});
 
 } // namespace pixie

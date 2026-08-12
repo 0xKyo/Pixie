@@ -20,7 +20,6 @@ std::string Trim(std::string s) {
 
 void Palette::Clear() {
     name_.clear();
-    sourcePath_.clear();
     colors_.clear();
 }
 
@@ -91,7 +90,6 @@ bool Palette::LoadFromGpl(const std::filesystem::path& path, std::string* error)
     }
 
     name_ = std::move(parsedName);
-    sourcePath_ = path;
     colors_ = std::move(parsedColors);
     return true;
 }

@@ -26,11 +26,9 @@ public:
     [[nodiscard]] bool Empty() const { return colors_.empty(); }
     [[nodiscard]] const std::vector<PaletteColor>& Colors() const { return colors_; }
     [[nodiscard]] const std::string& Name() const { return name_; }
-    [[nodiscard]] const std::filesystem::path& SourcePath() const { return sourcePath_; }
 
 private:
     std::string name_;
-    std::filesystem::path sourcePath_;
     std::vector<PaletteColor> colors_;
 };
 

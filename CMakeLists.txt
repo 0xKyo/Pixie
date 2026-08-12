@@ -27,6 +27,12 @@ add_executable(Pixie
   src/core/Palette.cpp
   src/core/Image.h
   src/core/Image.cpp
+  src/core/Mask.h
+  src/core/Mask.cpp
+  src/core/Crop.h
+  src/core/Crop.cpp
+  src/core/Downscale.h
+  src/core/Downscale.cpp
   src/core/Converter.h
   src/core/Converter.cpp
   src/app/Application.h
@@ -50,6 +56,11 @@ else()
   target_compile_options(Pixie PRIVATE -Wall -Wextra)
   find_package(Threads REQUIRED)
   target_link_libraries(Pixie PRIVATE Threads::Threads)
+endif()
+
+if(WIN32)
+  # GUI subsystem: no console window is allocated when launching Pixie.exe.
+  set_target_properties(Pixie PROPERTIES WIN32_EXECUTABLE TRUE)
 endif()
 
 set_property(DIRECTORY ${CMAKE_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT Pixie)
