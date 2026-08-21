@@ -33,6 +33,8 @@ add_executable(Pixie
   src/core/Crop.cpp
   src/core/Downscale.h
   src/core/Downscale.cpp
+  src/core/Downsize.h
+  src/core/Downsize.cpp
   src/core/Converter.h
   src/core/Converter.cpp
   src/app/Application.h

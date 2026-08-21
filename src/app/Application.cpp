@@ -14,6 +14,7 @@
 #include "core/Converter.h"
 #include "core/Crop.h"
 #include "core/Downscale.h"
+#include "core/Downsize.h"
 #include "core/Mask.h"
 
 #include <cmath>
@@ -186,9 +187,8 @@ void Application::PollConversion() {
     if (!palette_.Empty()) {
         statusMessage_ += " using palette \"" + palette_.Name() + "\"";
     }
-    if (downscaleEnabled_ && !palette_.Empty()) {
-        statusMessage_ += quantizeBeforeDownscale_ ? " (palette swapped before downscale)"
-                                                     : " (palette swapped after downscale)";
+    if (downsizeEnabled_ && !palette_.Empty()) {
+        statusMessage_ += " (palette swapped before resize)";
     }
 }
 
@@ -214,10 +214,10 @@ void Application::RecomputeBackgroundMask() {
     ComputeBackgroundMask(sourceImage_, static_cast<double>(backgroundTolerance_), backgroundMask_);
 }
 
-void Application::RenderCropOverlay(ImDrawList* drawList, float itemMinX, float itemMinY, float itemW, float itemH) {
+void Application::RenderDownsizeOverlay(ImDrawList* drawList, float itemMinX, float itemMinY, float itemW, float itemH) {
     const int imgW = sourceImage_.Width();
     const int imgH = sourceImage_.Height();
-    if (imgW <= 0 || imgH <= 0) {
+    if (imgW <= 0 || imgH <= 0 || downsizeCropRect_.Empty()) {
         return;
     }
     const float scaleX = itemW / static_cast<float>(imgW);
@@ -225,28 +225,29 @@ void Application::RenderCropOverlay(ImDrawList* drawList, float itemMinX, float 
 
     const ImVec2 itemMin(itemMinX, itemMinY);
     const ImVec2 itemMax(itemMinX + itemW, itemMinY + itemH);
-    const ImVec2 rectMin(itemMinX + cropRect_.x * scaleX, itemMinY + cropRect_.y * scaleY);
-    const ImVec2 rectMax(itemMinX + cropRect_.Right() * scaleX, itemMinY + cropRect_.Bottom() * scaleY);
+    const ImVec2 rectMin(itemMinX + downsizeCropRect_.x * scaleX, itemMinY + downsizeCropRect_.y * scaleY);
+    const ImVec2 rectMax(itemMinX + downsizeCropRect_.Right() * scaleX, itemMinY + downsizeCropRect_.Bottom() * scaleY);
 
-    // Dim everything outside the crop rect.
+    // Dim everything outside the sampling rect.
     const ImU32 dimColor = IM_COL32(0, 0, 0, 140);
-    drawList->AddRectFilled(itemMin, ImVec2(itemMax.x, rectMin.y), dimColor);                  // top
-    drawList->AddRectFilled(ImVec2(itemMin.x, rectMax.y), itemMax, dimColor);                  // bottom
+    drawList->AddRectFilled(itemMin, ImVec2(itemMax.x, rectMin.y), dimColor);                     // top
+    drawList->AddRectFilled(ImVec2(itemMin.x, rectMax.y), itemMax, dimColor);                     // bottom
     drawList->AddRectFilled(ImVec2(itemMin.x, rectMin.y), ImVec2(rectMin.x, rectMax.y), dimColor); // left
     drawList->AddRectFilled(ImVec2(rectMax.x, rectMin.y), ImVec2(itemMax.x, rectMax.y), dimColor); // right
 
     drawList->AddRect(rectMin, rectMax, IM_COL32(255, 255, 255, 230), 0.0f, 0, 1.5f);
 
-    const float midX = (rectMin.x + rectMax.x) * 0.5f;
-    const float midY = (rectMin.y + rectMax.y) * 0.5f;
+    // Corner handles only: resizing must preserve the target aspect ratio,
+    // so there's no single-axis (N/S/E/W) handle like a free-form crop tool.
     struct HandleDef {
-        CropHandle id;
+        DownsizeHandle id;
         ImVec2 pos;
     };
     const HandleDef handles[] = {
-        {CropHandle::NW, {rectMin.x, rectMin.y}}, {CropHandle::N, {midX, rectMin.y}}, {CropHandle::NE, {rectMax.x, rectMin.y}},
-        {CropHandle::W, {rectMin.x, midY}},                                           {CropHandle::E, {rectMax.x, midY}},
-        {CropHandle::SW, {rectMin.x, rectMax.y}}, {CropHandle::S, {midX, rectMax.y}}, {CropHandle::SE, {rectMax.x, rectMax.y}},
+        {DownsizeHandle::NW, {rectMin.x, rectMin.y}},
+        {DownsizeHandle::NE, {rectMax.x, rectMin.y}},
+        {DownsizeHandle::SW, {rectMin.x, rectMax.y}},
+        {DownsizeHandle::SE, {rectMax.x, rectMax.y}},
     };
 
     constexpr float kHandleHalf = 5.0f;
@@ -260,64 +261,79 @@ void Application::RenderCropOverlay(ImDrawList* drawList, float itemMinX, float 
 
     const ImVec2 mouse = ImGui::GetMousePos();
 
-    if (activeCropHandle_ == CropHandle::None && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && mouse.x >= itemMin.x &&
-        mouse.x <= itemMax.x && mouse.y >= itemMin.y && mouse.y <= itemMax.y) {
-        CropHandle hit = CropHandle::None;
+    if (activeDownsizeHandle_ == DownsizeHandle::None && ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
+        mouse.x >= itemMin.x && mouse.x <= itemMax.x && mouse.y >= itemMin.y && mouse.y <= itemMax.y) {
+        DownsizeHandle hit = DownsizeHandle::None;
         for (const auto& h : handles) {
             if (std::fabs(mouse.x - h.pos.x) <= kHandleHitHalf && std::fabs(mouse.y - h.pos.y) <= kHandleHitHalf) {
                 hit = h.id;
                 break;
             }
         }
-        if (hit == CropHandle::None && mouse.x >= rectMin.x && mouse.x <= rectMax.x && mouse.y >= rectMin.y &&
+        if (hit == DownsizeHandle::None && mouse.x >= rectMin.x && mouse.x <= rectMax.x && mouse.y >= rectMin.y &&
             mouse.y <= rectMax.y) {
-            hit = CropHandle::Move;
+            hit = DownsizeHandle::Move;
         }
-        if (hit != CropHandle::None) {
-            activeCropHandle_ = hit;
-            cropDragStartRect_ = cropRect_;
-            cropDragStartMouseX_ = mouse.x;
-            cropDragStartMouseY_ = mouse.y;
+        if (hit != DownsizeHandle::None) {
+            activeDownsizeHandle_ = hit;
+            downsizeDragStartRect_ = downsizeCropRect_;
+            downsizeDragStartMouseX_ = mouse.x;
+            downsizeDragStartMouseY_ = mouse.y;
         }
     }
 
-    if (activeCropHandle_ != CropHandle::None) {
+    if (activeDownsizeHandle_ != DownsizeHandle::None) {
         if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-            const int dx = static_cast<int>(std::lround((mouse.x - cropDragStartMouseX_) / scaleX));
-            const int dy = static_cast<int>(std::lround((mouse.y - cropDragStartMouseY_) / scaleY));
-
-            int x0 = cropDragStartRect_.x;
-            int y0 = cropDragStartRect_.y;
-            int x1 = cropDragStartRect_.Right();
-            int y1 = cropDragStartRect_.Bottom();
-
-            if (activeCropHandle_ == CropHandle::Move) {
-                const int clampedDx = std::clamp(dx, -x0, imgW - x1);
-                const int clampedDy = std::clamp(dy, -y0, imgH - y1);
-                x0 += clampedDx;
-                x1 += clampedDx;
-                y0 += clampedDy;
-                y1 += clampedDy;
+            if (activeDownsizeHandle_ == DownsizeHandle::Move) {
+                const int dx = static_cast<int>(std::lround((mouse.x - downsizeDragStartMouseX_) / scaleX));
+                const int dy = static_cast<int>(std::lround((mouse.y - downsizeDragStartMouseY_) / scaleY));
+                const int clampedDx = std::clamp(dx, -downsizeDragStartRect_.x, imgW - downsizeDragStartRect_.Right());
+                const int clampedDy = std::clamp(dy, -downsizeDragStartRect_.y, imgH - downsizeDragStartRect_.Bottom());
+                downsizeCropRect_.x = downsizeDragStartRect_.x + clampedDx;
+                downsizeCropRect_.y = downsizeDragStartRect_.y + clampedDy;
             } else {
-                constexpr int kMinSize = 4;
-                const bool west = activeCropHandle_ == CropHandle::W || activeCropHandle_ == CropHandle::NW ||
-                                   activeCropHandle_ == CropHandle::SW;
-                const bool east = activeCropHandle_ == CropHandle::E || activeCropHandle_ == CropHandle::NE ||
-                                   activeCropHandle_ == CropHandle::SE;
-                const bool north = activeCropHandle_ == CropHandle::N || activeCropHandle_ == CropHandle::NW ||
-                                    activeCropHandle_ == CropHandle::NE;
-                const bool south = activeCropHandle_ == CropHandle::S || activeCropHandle_ == CropHandle::SW ||
-                                    activeCropHandle_ == CropHandle::SE;
-                if (west) x0 = std::clamp(x0 + dx, 0, x1 - kMinSize);
-                if (east) x1 = std::clamp(x1 + dx, x0 + kMinSize, imgW);
-                if (north) y0 = std::clamp(y0 + dy, 0, y1 - kMinSize);
-                if (south) y1 = std::clamp(y1 + dy, y0 + kMinSize, imgH);
-            }
+                // Corner handles resize uniformly, anchored at the opposite
+                // corner, so the box always keeps the target aspect ratio.
+                const bool west = activeDownsizeHandle_ == DownsizeHandle::NW || activeDownsizeHandle_ == DownsizeHandle::SW;
+                const bool north = activeDownsizeHandle_ == DownsizeHandle::NW || activeDownsizeHandle_ == DownsizeHandle::NE;
+                const int anchorX = west ? downsizeDragStartRect_.Right() : downsizeDragStartRect_.x;
+                const int anchorY = north ? downsizeDragStartRect_.Bottom() : downsizeDragStartRect_.y;
 
-            cropRect_ = CropRect{x0, y0, x1 - x0, y1 - y0};
+                // Drive the resize off whichever axis the mouse moved further
+                // along (in image-pixel space, compared via the target aspect
+                // ratio), then derive the other axis from that ratio.
+                const float dxPixels =
+                    (west ? (downsizeDragStartMouseX_ - mouse.x) : (mouse.x - downsizeDragStartMouseX_)) / scaleX;
+                const float dyPixels =
+                    (north ? (downsizeDragStartMouseY_ - mouse.y) : (mouse.y - downsizeDragStartMouseY_)) / scaleY;
+                const double targetAspect = static_cast<double>(downsizeTargetWidth_) / downsizeTargetHeight_;
+
+                double newW = downsizeDragStartRect_.width +
+                               (std::fabs(dxPixels) >= std::fabs(dyPixels * targetAspect) ? dxPixels : dyPixels * targetAspect);
+                newW = std::max(4.0, newW);
+                double newH = newW / targetAspect;
+
+                // Clamp so the box never leaves the image, keeping the anchor corner fixed.
+                const double maxW = west ? anchorX : (imgW - anchorX);
+                const double maxH = north ? anchorY : (imgH - anchorY);
+                if (newW > maxW) {
+                    newW = maxW;
+                    newH = newW / targetAspect;
+                }
+                if (newH > maxH) {
+                    newH = maxH;
+                    newW = newH * targetAspect;
+                }
+
+                const int w = std::max(4, static_cast<int>(std::lround(newW)));
+                const int h = std::max(4, static_cast<int>(std::lround(newH)));
+                const int x = west ? anchorX - w : anchorX;
+                const int y = north ? anchorY - h : anchorY;
+                downsizeCropRect_ = CropRect{x, y, w, h};
+            }
         }
         if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
-            activeCropHandle_ = CropHandle::None;
+            activeDownsizeHandle_ = DownsizeHandle::None;
         }
     }
 }
@@ -353,10 +369,11 @@ void Application::DoOpenImage() {
             if (removeBackgroundEnabled_) {
                 RecomputeBackgroundMask();
             }
-            cropRect_ = CropRect{};
-            activeCropHandle_ = CropHandle::None;
-            if (cropEnabled_) {
-                cropRect_ = ComputeAutoCropRect(sourceImage_, static_cast<double>(cropTolerance_));
+            downsizeCropRect_ = CropRect{};
+            activeDownsizeHandle_ = DownsizeHandle::None;
+            if (downsizeEnabled_ && downsizeMaintainRatio_) {
+                downsizeCropRect_ = ComputeAspectFitRect(sourceImage_.Width(), sourceImage_.Height(), downsizeTargetWidth_,
+                                                          downsizeTargetHeight_);
             }
             RebuildSourceTexture();
             statusMessage_ = "Loaded image: " + path.filename().string() + " (" +
@@ -427,54 +444,49 @@ void Application::DoConvert() {
     statusMessage_ = "Converting...";
 
     // Snapshot a working copy up front (UI thread only): sourceImage_/
-    // backgroundMask_/cropRect_ resume being mutable as soon as this call returns.
-    const bool useCrop = cropEnabled_ && !cropRect_.Empty() &&
-                          (cropRect_.x != 0 || cropRect_.y != 0 || cropRect_.width != sourceImage_.Width() ||
-                           cropRect_.height != sourceImage_.Height());
+    // backgroundMask_/downsizeCropRect_ resume being mutable as soon as this
+    // call returns.
+    const bool useCrop = downsizeEnabled_ && downsizeMaintainRatio_ && !downsizeCropRect_.Empty();
+
     auto working = std::make_shared<Image>();
     if (useCrop) {
-        CropImage(sourceImage_, cropRect_, *working);
+        CropImage(sourceImage_, downsizeCropRect_, *working);
     } else {
         *working = sourceImage_;
     }
 
     if (removeBackgroundEnabled_ && backgroundMask_.MatchesSize(sourceImage_.Width(), sourceImage_.Height())) {
         // Bake the mask's transparency into the working copy now, so both
-        // downscale and quantize just see correct alpha, in either order.
+        // the resize and quantize just see correct alpha.
         if (useCrop) {
             Mask croppedMask;
-            CropMask(backgroundMask_, cropRect_, croppedMask);
+            CropMask(backgroundMask_, downsizeCropRect_, croppedMask);
             ApplyBackgroundMask(croppedMask, *working);
         } else {
             ApplyBackgroundMask(backgroundMask_, *working);
         }
     }
 
-    const bool useDownscale = downscaleEnabled_;
-    const int downscaleWidth = downscaleWidth_;
-    const bool quantizeFirst = quantizeBeforeDownscale_;
+    const bool useResize = downsizeEnabled_;
+    const int targetWidth = downsizeTargetWidth_;
+    const int targetHeight = downsizeTargetHeight_;
 
-    conversionFuture_ = std::async(std::launch::async, [this, working, useDownscale, downscaleWidth, quantizeFirst]() {
+    conversionFuture_ = std::async(std::launch::async, [this, working, useResize, targetWidth, targetHeight]() {
         Image stage = std::move(*working);
 
-        auto quantize = [this](Image& img) {
-            Image quantized;
-            ConvertImage(img, palette_, quantized);
-            img = std::move(quantized);
-        };
-        auto downscale = [](Image& img, int targetWidth) {
-            const int h = ComputeMatchingHeight(img.Width(), img.Height(), targetWidth);
-            Image resized;
-            DownscaleImage(img, targetWidth, h, resized);
-            img = std::move(resized);
-        };
+        // Palette is always swapped before resizing, so quantization sees full-res detail.
+        Image quantized;
+        ConvertImage(stage, palette_, quantized);
+        stage = std::move(quantized);
 
-        if (quantizeFirst) {
-            quantize(stage);
-            if (useDownscale) downscale(stage, downscaleWidth);
-        } else {
-            if (useDownscale) downscale(stage, downscaleWidth);
-            quantize(stage);
+        // If Maintain Ratio picked a same-aspect sampling rect this is a
+        // uniform scale, otherwise it stretches -- DownscaleImage resizes
+        // each axis independently and handles both shrinking and enlarging
+        // via its coverage-weighted filter.
+        if (useResize) {
+            Image resized;
+            DownscaleImage(stage, targetWidth, targetHeight, resized);
+            stage = std::move(resized);
         }
 
         resultImage_ = std::move(stage);
@@ -585,63 +597,53 @@ void Application::RenderUi() {
     ImGui::Separator();
     ImGui::Spacing();
 
+    // Free-form Width/Height target with an optional aspect-locked sampling
+    // rect. The palette is always swapped before resizing.
     ImGui::BeginDisabled(converting_ || sourceImage_.Empty());
-    if (ImGui::Checkbox("Crop", &cropEnabled_)) {
-        if (cropEnabled_ && cropRect_.Empty()) {
-            cropRect_ = ComputeAutoCropRect(sourceImage_, static_cast<double>(cropTolerance_));
+    if (ImGui::Checkbox("Downsize", &downsizeEnabled_)) {
+        activeDownsizeHandle_ = DownsizeHandle::None;
+        if (downsizeEnabled_ && downsizeMaintainRatio_ && downsizeCropRect_.Empty()) {
+            downsizeCropRect_ = ComputeAspectFitRect(sourceImage_.Width(), sourceImage_.Height(), downsizeTargetWidth_,
+                                                      downsizeTargetHeight_);
         }
-        activeCropHandle_ = CropHandle::None;
     }
-    if (cropEnabled_) {
-        ImGui::SetNextItemWidth(-1.0f);
-        ImGui::SliderFloat("##CropTolerance", &cropTolerance_, 1.0f, 30.0f, "Tolerance %.1f");
-        if (ImGui::Button("Auto Crop")) {
-            cropRect_ = ComputeAutoCropRect(sourceImage_, static_cast<double>(cropTolerance_));
-            activeCropHandle_ = CropHandle::None;
-        }
+    if (downsizeEnabled_) {
+        ImGui::SetNextItemWidth(80.0f);
+        ImGui::InputInt("Width", &downsizeTargetWidth_);
+        downsizeTargetWidth_ = std::max(1, downsizeTargetWidth_);
+        const bool widthEdited = ImGui::IsItemDeactivatedAfterEdit();
+
         ImGui::SameLine();
-        if (ImGui::Button("Reset Crop")) {
-            cropRect_ = CropRect{0, 0, sourceImage_.Width(), sourceImage_.Height()};
-            activeCropHandle_ = CropHandle::None;
+        ImGui::SetNextItemWidth(80.0f);
+        ImGui::InputInt("Height", &downsizeTargetHeight_);
+        downsizeTargetHeight_ = std::max(1, downsizeTargetHeight_);
+        const bool heightEdited = ImGui::IsItemDeactivatedAfterEdit();
+
+        if ((widthEdited || heightEdited) && downsizeMaintainRatio_) {
+            downsizeCropRect_ = ComputeAspectFitRect(sourceImage_.Width(), sourceImage_.Height(), downsizeTargetWidth_,
+                                                      downsizeTargetHeight_);
+            activeDownsizeHandle_ = DownsizeHandle::None;
         }
-        ImGui::Text("(%d, %d) %dx%d", cropRect_.x, cropRect_.y, cropRect_.width, cropRect_.height);
-    }
-    ImGui::EndDisabled();
 
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    ImGui::BeginDisabled(converting_ || sourceImage_.Empty());
-    ImGui::Checkbox("Downscale", &downscaleEnabled_);
-    if (downscaleEnabled_) {
-        struct DownscaleOption {
-            int width;
-            const char* label;
-        };
-        constexpr DownscaleOption kDownscaleOptions[] = {
-            {16, "16"},
-            {32, "32"},
-            {64, "64"},
-            {128, "128"},
-        };
-        constexpr int kDownscaleOptionCount = 4;
-
-        for (int i = 0; i < kDownscaleOptionCount; ++i) {
-            const DownscaleOption& option = kDownscaleOptions[i];
-            if (ImGui::RadioButton(option.label, downscaleWidth_ == option.width)) {
-                downscaleWidth_ = option.width;
+        if (ImGui::Checkbox("Maintain Ratio", &downsizeMaintainRatio_)) {
+            if (downsizeMaintainRatio_ && downsizeCropRect_.Empty()) {
+                downsizeCropRect_ = ComputeAspectFitRect(sourceImage_.Width(), sourceImage_.Height(), downsizeTargetWidth_,
+                                                          downsizeTargetHeight_);
             }
-            if (i + 1 < kDownscaleOptionCount) {
-                ImGui::SameLine();
-            }
+            activeDownsizeHandle_ = DownsizeHandle::None;
         }
-        const int previewHeight = ComputeMatchingHeight(sourceImage_.Width(), sourceImage_.Height(), downscaleWidth_);
-        ImGui::Text("-> %dx%d", downscaleWidth_, previewHeight);
-
-        ImGui::BeginDisabled(palette_.Empty());
-        ImGui::Checkbox("Swap palette before downscale", &quantizeBeforeDownscale_);
-        ImGui::EndDisabled();
+        if (downsizeMaintainRatio_) {
+            if (ImGui::Button("Reset Sampling")) {
+                downsizeCropRect_ = ComputeAspectFitRect(sourceImage_.Width(), sourceImage_.Height(), downsizeTargetWidth_,
+                                                          downsizeTargetHeight_);
+                activeDownsizeHandle_ = DownsizeHandle::None;
+            }
+            ImGui::SameLine();
+            ImGui::Text("(%d, %d) %dx%d", downsizeCropRect_.x, downsizeCropRect_.y, downsizeCropRect_.width,
+                        downsizeCropRect_.height);
+        } else {
+            ImGui::TextDisabled("Image will be stretched to fit");
+        }
     }
     ImGui::EndDisabled();
 
@@ -654,8 +656,8 @@ void Application::RenderUi() {
 
     ImGui::BeginChild("SourcePreview", ImVec2(halfWidth, 0.0f), ImGuiChildFlags_Borders);
     ImGui::Text("Source (%dx%d)", sourceImage_.Width(), sourceImage_.Height());
-    if (cropEnabled_) {
-        ImGui::TextDisabled("Drag the handles to adjust the crop");
+    if (downsizeEnabled_ && downsizeMaintainRatio_) {
+        ImGui::TextDisabled("Drag the handles to choose the sampled region");
     } else if (removeBackgroundEnabled_) {
         ImGui::TextDisabled("Click the image to include/exclude a region");
     }
@@ -666,8 +668,8 @@ void Application::RenderUi() {
         const ImVec2 itemMin = ImGui::GetItemRectMin();
         const ImVec2 itemSize = ImGui::GetItemRectSize();
 
-        if (cropEnabled_ && !converting_ && itemSize.x > 0.0f && itemSize.y > 0.0f) {
-            RenderCropOverlay(ImGui::GetWindowDrawList(), itemMin.x, itemMin.y, itemSize.x, itemSize.y);
+        if (downsizeEnabled_ && downsizeMaintainRatio_ && !converting_ && itemSize.x > 0.0f && itemSize.y > 0.0f) {
+            RenderDownsizeOverlay(ImGui::GetWindowDrawList(), itemMin.x, itemMin.y, itemSize.x, itemSize.y);
         } else if (removeBackgroundEnabled_ && !converting_ && !backgroundMask_.Empty() &&
                    ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
             if (itemSize.x > 0.0f && itemSize.y > 0.0f) {

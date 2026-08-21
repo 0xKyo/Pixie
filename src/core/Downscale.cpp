@@ -7,14 +7,6 @@
 
 namespace pixie {
 
-int ComputeMatchingHeight(int srcWidth, int srcHeight, int targetWidth) {
-    if (srcWidth <= 0 || targetWidth <= 0) {
-        return 0;
-    }
-    const double ratio = static_cast<double>(srcHeight) / static_cast<double>(srcWidth);
-    return std::max(1, static_cast<int>(std::lround(targetWidth * ratio)));
-}
-
 namespace {
 
 // A premultiplied-alpha RGBA sample, channels normalized to [0, 1]. Kept as

@@ -4,38 +4,6 @@
 
 namespace pixie {
 
-CropRect ComputeAutoCropRect(const Image& src, double tolerance) {
-    const int width = src.Width();
-    const int height = src.Height();
-    const CropRect fullRect{0, 0, width, height};
-    if (src.Empty()) {
-        return fullRect;
-    }
-
-    Mask backgroundMask;
-    ComputeBackgroundMask(src, tolerance, backgroundMask);
-
-    int minX = width;
-    int minY = height;
-    int maxX = -1;
-    int maxY = -1;
-    for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < width; ++x) {
-            const bool background = backgroundMask.Get(x, y) || src.GetPixel(x, y).a == 0;
-            if (background) continue;
-            minX = std::min(minX, x);
-            minY = std::min(minY, y);
-            maxX = std::max(maxX, x);
-            maxY = std::max(maxY, y);
-        }
-    }
-
-    if (maxX < minX || maxY < minY) {
-        return fullRect; // nothing but background; keep the full image
-    }
-    return CropRect{minX, minY, maxX - minX + 1, maxY - minY + 1};
-}
-
 namespace {
 
 CropRect ClampRect(const CropRect& rect, int srcWidth, int srcHeight) {

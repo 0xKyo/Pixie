@@ -17,10 +17,6 @@ struct CropRect {
     [[nodiscard]] bool Empty() const { return width <= 0 || height <= 0; }
 };
 
-// Bounding box of non-background "subject" pixels (border flood-fill like
-// ComputeBackgroundMask, plus alpha == 0). Falls back to the full image if nothing would be trimmed.
-CropRect ComputeAutoCropRect(const Image& src, double tolerance);
-
 // Clamps `rect` to `src`'s bounds and copies that region into `dst`. Leaves
 // `dst` untouched if the clamped rect is empty.
 void CropImage(const Image& src, const CropRect& rect, Image& dst);
