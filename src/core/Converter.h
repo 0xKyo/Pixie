@@ -14,4 +14,8 @@ struct ConvertOptions {
 // pass through unchanged if `palette` is empty). Alpha is preserved; `dst` is resized to match `src`.
 void ConvertImage(const Image& src, const Palette& palette, Image& dst, const ConvertOptions& opts = {});
 
+// Snaps every pixel's alpha to fully opaque (255) or fully transparent (0),
+// rounding to whichever is closer.
+void BinarizeAlpha(Image& image);
+
 } // namespace pixie

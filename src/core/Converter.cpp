@@ -81,4 +81,16 @@ void ConvertImage(const Image& src, const Palette& palette, Image& dst, const Co
     }
 }
 
+void BinarizeAlpha(Image& image) {
+    const int width = image.Width();
+    const int height = image.Height();
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            RGB8 pixel = image.GetPixel(x, y);
+            pixel.a = pixel.a >= 128 ? 255 : 0;
+            image.SetPixel(x, y, pixel);
+        }
+    }
+}
+
 } // namespace pixie

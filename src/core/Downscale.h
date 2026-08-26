@@ -4,11 +4,10 @@
 
 namespace pixie {
 
-// Resizes `src` to `dstWidth`x`dstHeight` via coverage-weighted box-filter
-// resampling (each axis independent, so non-square aspect changes stretch).
-// Alpha is premultiplied first so a transparent pixel's leftover RGB never
-// bleeds into an opaque edge. Named for its main use (pixel-art downscale)
-// but the filter is coverage-based, so it enlarges just as correctly.
+// Resizes `src` to `dstWidth`x`dstHeight` via nearest-neighbor sampling (each
+// axis independent, so non-square aspect changes stretch). Every output pixel
+// is a verbatim copy of one input pixel, so it never introduces a color that
+// wasn't already in `src` -- critical for running after palette quantization.
 void DownscaleImage(const Image& src, int dstWidth, int dstHeight, Image& dst);
 
 } // namespace pixie

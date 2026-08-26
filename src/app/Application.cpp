@@ -34,8 +34,19 @@ using NativeString = std::filesystem::path::string_type;
 
 // Default starting directories for the file dialogs.
 constexpr const nfdnchar_t* kDefaultSourceDir = PIXIE_NSTR("E:\\Workspace\\Pixie\\assets\\source");
-constexpr const nfdnchar_t* kDefaultPaletteDir = PIXIE_NSTR("E:\\Workspace\\Pixie\\assets\\palettes");
 constexpr const nfdnchar_t* kDefaultConvertedDir = PIXIE_NSTR("E:\\Workspace\\Pixie\\assets\\converted");
+
+// Palette preloaded at startup so there's always a sensible default active.
+constexpr const char* kStartupPaletteFile = "E:\\Workspace\\Pixie\\assets\\palettes\\apollo.gpl";
+
+// The palette dir lives in a sibling project (not under this repo), so it's
+// resolved relative to the exe's location instead of hardcoded as an absolute path.
+std::filesystem::path DefaultPaletteDir() {
+    // Owned by SDL; not to be freed by the caller.
+    const char* base = SDL_GetBasePath();
+    const std::filesystem::path dir = base ? std::filesystem::path(base) : std::filesystem::current_path();
+    return (dir / ".." / ".." / ".." / ".." / "InerteGames" / "Games" / "Maximo" / "Art" / "Palettes").lexically_normal();
+}
 
 ImVec2 FitToRegion(int imageWidth, int imageHeight, ImVec2 avail) {
     if (imageWidth <= 0 || imageHeight <= 0 || avail.x <= 1.0f || avail.y <= 1.0f) {
@@ -91,6 +102,13 @@ bool Application::Init() {
         return false;
     }
     nfdInitialized_ = true;
+
+    std::string error;
+    if (palette_.LoadFromGpl(kStartupPaletteFile, &error)) {
+        statusMessage_ = "Loaded palette: " + palette_.Name() + " (" + std::to_string(palette_.Colors().size()) + " colors)";
+    } else {
+        statusMessage_ = "Failed to load default palette: " + error;
+    }
 
     return true;
 }
@@ -392,7 +410,8 @@ void Application::DoOpenPalette() {
         {PIXIE_NSTR("GIMP Palette"), PIXIE_NSTR("gpl")},
     };
 
-    const nfdresult_t result = NFD::OpenDialog(outPath, filters, 1, kDefaultPaletteDir);
+    const std::filesystem::path paletteDir = DefaultPaletteDir();
+    const nfdresult_t result = NFD::OpenDialog(outPath, filters, 1, paletteDir.c_str());
     if (result == NFD_OKAY) {
         const std::filesystem::path path(outPath.get());
         std::string error;
@@ -481,13 +500,16 @@ void Application::DoConvert() {
 
         // If Maintain Ratio picked a same-aspect sampling rect this is a
         // uniform scale, otherwise it stretches -- DownscaleImage resizes
-        // each axis independently and handles both shrinking and enlarging
-        // via its coverage-weighted filter.
+        // each axis independently via nearest-neighbor, so it never invents
+        // a color outside the palette we just quantized to.
         if (useResize) {
             Image resized;
             DownscaleImage(stage, targetWidth, targetHeight, resized);
             stage = std::move(resized);
         }
+
+        // Resizing/masking can leave partial alpha; force opaque-or-transparent.
+        BinarizeAlpha(stage);
 
         resultImage_ = std::move(stage);
     });
