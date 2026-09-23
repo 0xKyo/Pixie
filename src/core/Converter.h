@@ -18,4 +18,7 @@ void ConvertImage(const Image& src, const Palette& palette, Image& dst, const Co
 // rounding to whichever is closer.
 void BinarizeAlpha(Image& image);
 
+// Makes every pixel with any alpha (> 0) fully opaque; fully transparent pixels stay at 0.
+void RemoveTransparency(Image& image);
+
 } // namespace pixie

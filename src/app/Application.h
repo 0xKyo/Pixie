@@ -55,12 +55,17 @@ private:
     Image sourceImage_;
     Image resultImage_;
     Palette palette_;
+    // When off, Convert keeps the original colors and only applies the other tools.
+    bool usePaletteEnabled_ = true;
 
     // Only mutated by the UI thread while `converting_` is false; DoConvert()
     // bakes it into a working copy before handing off to the worker thread.
     Mask backgroundMask_;
     bool removeBackgroundEnabled_ = false;
     float backgroundTolerance_ = 10.0f; // CIEDE2000 units; slider range [1, 30]
+
+    // Forces any partially transparent pixel (alpha > 0) to fully opaque before conversion.
+    bool removeTransparencyEnabled_ = false;
 
     // Downsize tool state: free-form target size with an optional
     // aspect-locked sampling rect. Internal names use "Downsize" to avoid

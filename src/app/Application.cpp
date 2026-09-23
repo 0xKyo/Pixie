@@ -202,10 +202,13 @@ void Application::PollConversion() {
     resultHeight_ = resultImage_.Height();
     RebuildResultTexture();
     statusMessage_ = "Converted to " + std::to_string(resultWidth_) + "x" + std::to_string(resultHeight_);
-    if (!palette_.Empty()) {
+    const bool usedPalette = usePaletteEnabled_ && !palette_.Empty();
+    if (usedPalette) {
         statusMessage_ += " using palette \"" + palette_.Name() + "\"";
+    } else {
+        statusMessage_ += " (original colors, no palette)";
     }
-    if (downsizeEnabled_ && !palette_.Empty()) {
+    if (downsizeEnabled_ && usedPalette) {
         statusMessage_ += " (palette swapped before resize)";
     }
 }
@@ -215,13 +218,19 @@ void Application::RebuildSourceTexture() {
         SDL_DestroyTexture(sourceTexture_);
         sourceTexture_ = nullptr;
     }
-    if (removeBackgroundEnabled_ && backgroundMask_.MatchesSize(sourceImage_.Width(), sourceImage_.Height())) {
-        Image masked = sourceImage_; // cheap copy for preview only; no CIEDE2000 involved
-        ApplyBackgroundMask(backgroundMask_, masked);
-        sourceTexture_ = CreateTextureFromImage(renderer_, masked);
-    } else {
+    const bool useMask = removeBackgroundEnabled_ && backgroundMask_.MatchesSize(sourceImage_.Width(), sourceImage_.Height());
+    if (!useMask && !removeTransparencyEnabled_) {
         sourceTexture_ = CreateTextureFromImage(renderer_, sourceImage_);
+        return;
     }
+    Image preview = sourceImage_; // cheap copy for preview only; no CIEDE2000 involved
+    if (removeTransparencyEnabled_) {
+        RemoveTransparency(preview);
+    }
+    if (useMask) {
+        ApplyBackgroundMask(backgroundMask_, preview);
+    }
+    sourceTexture_ = CreateTextureFromImage(renderer_, preview);
 }
 
 void Application::RecomputeBackgroundMask() {
@@ -474,6 +483,11 @@ void Application::DoConvert() {
         *working = sourceImage_;
     }
 
+    // Before the mask, so background pixels it clears stay fully transparent.
+    if (removeTransparencyEnabled_) {
+        RemoveTransparency(*working);
+    }
+
     if (removeBackgroundEnabled_ && backgroundMask_.MatchesSize(sourceImage_.Width(), sourceImage_.Height())) {
         // Bake the mask's transparency into the working copy now, so both
         // the resize and quantize just see correct alpha.
@@ -486,17 +500,20 @@ void Application::DoConvert() {
         }
     }
 
+    const bool usePalette = usePaletteEnabled_ && !palette_.Empty();
     const bool useResize = downsizeEnabled_;
     const int targetWidth = downsizeTargetWidth_;
     const int targetHeight = downsizeTargetHeight_;
 
-    conversionFuture_ = std::async(std::launch::async, [this, working, useResize, targetWidth, targetHeight]() {
+    conversionFuture_ = std::async(std::launch::async, [this, working, usePalette, useResize, targetWidth, targetHeight]() {
         Image stage = std::move(*working);
 
         // Palette is always swapped before resizing, so quantization sees full-res detail.
-        Image quantized;
-        ConvertImage(stage, palette_, quantized);
-        stage = std::move(quantized);
+        if (usePalette) {
+            Image quantized;
+            ConvertImage(stage, palette_, quantized);
+            stage = std::move(quantized);
+        }
 
         // If Maintain Ratio picked a same-aspect sampling rect this is a
         // uniform scale, otherwise it stretches -- DownscaleImage resizes
@@ -561,6 +578,9 @@ void Application::RenderUi() {
 
     constexpr float kPaletteColumnWidth = 240.0f;
     ImGui::BeginChild("PaletteList", ImVec2(kPaletteColumnWidth, 0.0f), ImGuiChildFlags_Borders);
+    ImGui::BeginDisabled(converting_);
+    ImGui::Checkbox("Use Palette", &usePaletteEnabled_);
+    ImGui::EndDisabled();
     ImGui::Text("Palette: %s", palette_.Empty() ? "(none)" : palette_.Name().c_str());
     ImGui::Text("%zu colors", palette_.Colors().size());
     ImGui::Separator();
@@ -596,6 +616,16 @@ void Application::RenderUi() {
 
     ImGui::Separator();
     ImGui::TextUnformatted("Tools");
+    ImGui::Spacing();
+
+    ImGui::BeginDisabled(converting_ || sourceImage_.Empty());
+    if (ImGui::Checkbox("Remove Transparency", &removeTransparencyEnabled_)) {
+        RebuildSourceTexture();
+    }
+    ImGui::EndDisabled();
+
+    ImGui::Spacing();
+    ImGui::Separator();
     ImGui::Spacing();
 
     ImGui::BeginDisabled(converting_ || sourceImage_.Empty());

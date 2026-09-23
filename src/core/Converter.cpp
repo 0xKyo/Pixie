@@ -93,4 +93,18 @@ void BinarizeAlpha(Image& image) {
     }
 }
 
+void RemoveTransparency(Image& image) {
+    const int width = image.Width();
+    const int height = image.Height();
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            RGB8 pixel = image.GetPixel(x, y);
+            if (pixel.a > 0) {
+                pixel.a = 255;
+                image.SetPixel(x, y, pixel);
+            }
+        }
+    }
+}
+
 } // namespace pixie
