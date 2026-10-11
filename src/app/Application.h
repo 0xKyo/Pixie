@@ -2,9 +2,11 @@
 
 #include <SDL3/SDL.h>
 
+#include <atomic>
 #include <filesystem>
 #include <future>
 #include <string>
+#include <vector>
 
 #include "core/Crop.h"
 #include "core/Image.h"
@@ -41,6 +43,12 @@ private:
     void DoOpenPalette();
     void DoSaveResult();
     void DoConvert();
+    void DoConvertAll();
+
+    // Loads `path` as the active source image and resets per-image state
+    // (result, mask, sampling rect). Returns false (state untouched) on failure.
+    bool LoadSourceImage(const std::filesystem::path& path);
+    void SelectBatchImage(size_t index);
 
     void RebuildSourceTexture();
     void RebuildResultTexture();
@@ -99,8 +107,26 @@ private:
 
     std::filesystem::path sourcePath_;
 
+    // Every image picked in the Open dialog. One is "active" (sourceImage_,
+    // previewed/edited); Convert All applies the same tool settings to all.
+    std::vector<std::filesystem::path> batchPaths_;
+    size_t activeBatchIndex_ = 0;
+
     std::future<void> conversionFuture_;
     bool converting_ = false;
+
+    // Convert All state. The worker writes the result fields and `batchDone_`;
+    // the UI thread reads them only while `converting_` is true (progress, via
+    // the atomic) or after the future is ready (summary).
+    bool batchConverting_ = false;
+    std::atomic<int> batchDone_{0};
+    int batchTotal_ = 0;
+    int batchSaved_ = 0;
+    int batchFailed_ = 0;
+    std::string batchFirstError_;
+    std::filesystem::path batchOutputDir_;
+    // UTF-8 base name for Convert All outputs (<name>_01.png, ...); defaults to the first image's name.
+    char batchBaseName_[128] = "converted";
 
     std::string statusMessage_;
     std::string lastError_;

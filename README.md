@@ -76,7 +76,14 @@ cmake -B build/vs -G "Visual Studio 17 2022" -A x64 -DCMAKE_TOOLCHAIN_FILE="$env
 
 ## Usage
 
-1. **Open Image...** — load the source image (PNG, JPEG, BMP, TGA, GIF, PSD, HDR, ...).
+1. **Open Image(s)...** — load one or more source images (PNG, JPEG, BMP, TGA, GIF, PSD, HDR, ...).
+   With several selected, they're listed in the sidebar; click one to preview
+   and tune the tools on it. **Convert All (N) To Folder...** then applies the
+   same settings to every image and writes `<name>_01.png`, `<name>_02.png`, ... into the folder
+   you pick (the base name is editable in the sidebar). For the other images, the sampling box is yours if they're the
+   same size as the previewed one (otherwise a centered fit), and the
+   background is auto-detected at the current tolerance (manual
+   include/exclude clicks only affect the previewed image).
 2. **Open Palette (.gpl)...** — optional. Sample palettes are included at
    `assets/palettes/pico-8.gpl` and `assets/palettes/apollo.gpl`.
 3. In the sidebar, enable whichever **Tools** you want (Remove Background,

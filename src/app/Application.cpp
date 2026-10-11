@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
 
 #include "app/TextureHelper.h"
 #include "core/Converter.h"
@@ -54,6 +55,68 @@ ImVec2 FitToRegion(int imageWidth, int imageHeight, ImVec2 avail) {
     }
     const float scale = std::min(avail.x / static_cast<float>(imageWidth), avail.y / static_cast<float>(imageHeight));
     return ImVec2(imageWidth * scale, imageHeight * scale);
+}
+
+// Everything the conversion pipeline needs besides the image itself. Shared by
+// the single-image Convert and Convert All so both produce identical output.
+struct PipelineSettings {
+    bool removeTransparency = false;
+    bool useResize = false;
+    int targetWidth = 0;
+    int targetHeight = 0;
+};
+
+// `mask` is a full-size background mask for `source` (nullptr = keep the
+// background); `crop` is applied first when non-empty; `palette` null = keep
+// the original colors.
+Image RunPipeline(const Image& source, const PipelineSettings& settings, const Mask* mask, const CropRect& crop,
+                  const Palette* palette) {
+    const bool useCrop = !crop.Empty();
+
+    Image stage;
+    if (useCrop) {
+        CropImage(source, crop, stage);
+    } else {
+        stage = source;
+    }
+
+    // Before the mask, so background pixels it clears stay fully transparent.
+    if (settings.removeTransparency) {
+        RemoveTransparency(stage);
+    }
+
+    if (mask && mask->MatchesSize(source.Width(), source.Height())) {
+        // Bake the mask's transparency in now, so both the resize and
+        // quantize just see correct alpha.
+        if (useCrop) {
+            Mask croppedMask;
+            CropMask(*mask, crop, croppedMask);
+            ApplyBackgroundMask(croppedMask, stage);
+        } else {
+            ApplyBackgroundMask(*mask, stage);
+        }
+    }
+
+    // Palette is always swapped before resizing, so quantization sees full-res detail.
+    if (palette && !palette->Empty()) {
+        Image quantized;
+        ConvertImage(stage, *palette, quantized);
+        stage = std::move(quantized);
+    }
+
+    // If Maintain Ratio picked a same-aspect sampling rect this is a
+    // uniform scale, otherwise it stretches -- DownscaleImage resizes
+    // each axis independently via nearest-neighbor, so it never invents
+    // a color outside the palette we just quantized to.
+    if (settings.useResize) {
+        Image resized;
+        DownscaleImage(stage, settings.targetWidth, settings.targetHeight, resized);
+        stage = std::move(resized);
+    }
+
+    // Resizing/masking can leave partial alpha; force opaque-or-transparent.
+    BinarizeAlpha(stage);
+    return stage;
 }
 
 } // namespace
@@ -198,6 +261,17 @@ void Application::PollConversion() {
     }
     conversionFuture_.get();
     converting_ = false;
+
+    if (batchConverting_) {
+        batchConverting_ = false;
+        statusMessage_ = "Converted " + std::to_string(batchSaved_) + " of " + std::to_string(batchTotal_) +
+                          " images to " + batchOutputDir_.string();
+        if (batchFailed_ > 0) {
+            statusMessage_ += " (" + std::to_string(batchFailed_) + " failed; first error: " + batchFirstError_ + ")";
+        }
+        return;
+    }
+
     resultWidth_ = resultImage_.Width();
     resultHeight_ = resultImage_.Height();
     RebuildResultTexture();
@@ -373,43 +447,85 @@ void Application::RebuildResultTexture() {
     resultTexture_ = CreateTextureFromImage(renderer_, resultImage_);
 }
 
+bool Application::LoadSourceImage(const std::filesystem::path& path) {
+    std::string error;
+    if (!sourceImage_.LoadFromFile(path, &error)) {
+        statusMessage_ = "Failed to load image " + path.filename().string() + ": " + error;
+        return false;
+    }
+    sourcePath_ = path;
+    resultImage_.Clear();
+    resultWidth_ = 0;
+    resultHeight_ = 0;
+    if (resultTexture_) {
+        SDL_DestroyTexture(resultTexture_);
+        resultTexture_ = nullptr;
+    }
+    backgroundMask_.Clear();
+    if (removeBackgroundEnabled_) {
+        RecomputeBackgroundMask();
+    }
+    downsizeCropRect_ = CropRect{};
+    activeDownsizeHandle_ = DownsizeHandle::None;
+    if (downsizeEnabled_ && downsizeMaintainRatio_) {
+        downsizeCropRect_ = ComputeAspectFitRect(sourceImage_.Width(), sourceImage_.Height(), downsizeTargetWidth_,
+                                                  downsizeTargetHeight_);
+    }
+    RebuildSourceTexture();
+    statusMessage_ = "Loaded image: " + path.filename().string() + " (" + std::to_string(sourceImage_.Width()) + "x" +
+                      std::to_string(sourceImage_.Height()) + ")";
+    return true;
+}
+
+void Application::SelectBatchImage(size_t index) {
+    if (converting_ || index >= batchPaths_.size() || index == activeBatchIndex_) {
+        return;
+    }
+    if (LoadSourceImage(batchPaths_[index])) {
+        activeBatchIndex_ = index;
+    }
+}
+
 void Application::DoOpenImage() {
-    NFD::UniquePathN outPath;
+    NFD::UniquePathSet outPaths;
     const nfdnfilteritem_t filters[] = {
         {PIXIE_NSTR("Image Files"), PIXIE_NSTR("png,jpg,jpeg,bmp,tga,gif,psd,hdr,pic,pgm,ppm")},
     };
 
-    const nfdresult_t result = NFD::OpenDialog(outPath, filters, 1, kDefaultSourceDir);
-    if (result == NFD_OKAY) {
-        const std::filesystem::path path(outPath.get());
-        std::string error;
-        if (sourceImage_.LoadFromFile(path, &error)) {
-            sourcePath_ = path;
-            resultImage_.Clear();
-            resultWidth_ = 0;
-            resultHeight_ = 0;
-            if (resultTexture_) {
-                SDL_DestroyTexture(resultTexture_);
-                resultTexture_ = nullptr;
-            }
-            backgroundMask_.Clear();
-            if (removeBackgroundEnabled_) {
-                RecomputeBackgroundMask();
-            }
-            downsizeCropRect_ = CropRect{};
-            activeDownsizeHandle_ = DownsizeHandle::None;
-            if (downsizeEnabled_ && downsizeMaintainRatio_) {
-                downsizeCropRect_ = ComputeAspectFitRect(sourceImage_.Width(), sourceImage_.Height(), downsizeTargetWidth_,
-                                                          downsizeTargetHeight_);
-            }
-            RebuildSourceTexture();
-            statusMessage_ = "Loaded image: " + path.filename().string() + " (" +
-                              std::to_string(sourceImage_.Width()) + "x" + std::to_string(sourceImage_.Height()) + ")";
-        } else {
-            statusMessage_ = "Failed to load image: " + error;
-        }
-    } else if (result == NFD_ERROR) {
+    const nfdresult_t result = NFD::OpenDialogMultiple(outPaths, filters, 1, kDefaultSourceDir);
+    if (result == NFD_ERROR) {
         statusMessage_ = std::string("File dialog error: ") + NFD::GetError();
+        return;
+    }
+    if (result != NFD_OKAY) {
+        return;
+    }
+
+    nfdpathsetsize_t count = 0;
+    if (NFD::PathSet::Count(outPaths, count) != NFD_OKAY || count == 0) {
+        return;
+    }
+    std::vector<std::filesystem::path> paths;
+    paths.reserve(count);
+    for (nfdpathsetsize_t i = 0; i < count; ++i) {
+        NFD::UniquePathSetPathN path;
+        if (NFD::PathSet::GetPath(outPaths, i, path) == NFD_OKAY) {
+            paths.emplace_back(path.get());
+        }
+    }
+    if (paths.empty()) {
+        return;
+    }
+
+    // Only replace the current batch if the first image actually loads.
+    if (LoadSourceImage(paths.front())) {
+        batchPaths_ = std::move(paths);
+        activeBatchIndex_ = 0;
+        const std::u8string stem = batchPaths_.front().stem().u8string();
+        std::snprintf(batchBaseName_, sizeof(batchBaseName_), "%s", reinterpret_cast<const char*>(stem.c_str()));
+        if (batchPaths_.size() > 1) {
+            statusMessage_ += " - " + std::to_string(batchPaths_.size()) + " images in batch";
+        }
     }
 }
 
@@ -448,7 +564,7 @@ void Application::DoSaveResult() {
 
     const NativeString defaultName = sourcePath_.empty()
                                           ? NativeString(PIXIE_NSTR("converted.png"))
-                                          : sourcePath_.stem().native() + NativeString(PIXIE_NSTR("_pixie.png"));
+                                          : sourcePath_.stem().native() + NativeString(PIXIE_NSTR(".png"));
 
     const nfdresult_t result = NFD::SaveDialog(outPath, filters, 1, kDefaultConvertedDir, defaultName.c_str());
     if (result == NFD_OKAY) {
@@ -471,65 +587,137 @@ void Application::DoConvert() {
     converting_ = true;
     statusMessage_ = "Converting...";
 
-    // Snapshot a working copy up front (UI thread only): sourceImage_/
-    // backgroundMask_/downsizeCropRect_ resume being mutable as soon as this
-    // call returns.
+    // Snapshot everything on the UI thread: sourceImage_/backgroundMask_/
+    // downsizeCropRect_ resume being mutable as soon as this call returns.
     const bool useCrop = downsizeEnabled_ && downsizeMaintainRatio_ && !downsizeCropRect_.Empty();
+    const CropRect crop = useCrop ? downsizeCropRect_ : CropRect{};
+    const bool useMask = removeBackgroundEnabled_ && backgroundMask_.MatchesSize(sourceImage_.Width(), sourceImage_.Height());
 
-    auto working = std::make_shared<Image>();
-    if (useCrop) {
-        CropImage(sourceImage_, downsizeCropRect_, *working);
-    } else {
-        *working = sourceImage_;
-    }
+    auto source = std::make_shared<Image>(sourceImage_);
+    auto mask = useMask ? std::make_shared<Mask>(backgroundMask_) : nullptr;
 
-    // Before the mask, so background pixels it clears stay fully transparent.
-    if (removeTransparencyEnabled_) {
-        RemoveTransparency(*working);
-    }
-
-    if (removeBackgroundEnabled_ && backgroundMask_.MatchesSize(sourceImage_.Width(), sourceImage_.Height())) {
-        // Bake the mask's transparency into the working copy now, so both
-        // the resize and quantize just see correct alpha.
-        if (useCrop) {
-            Mask croppedMask;
-            CropMask(backgroundMask_, downsizeCropRect_, croppedMask);
-            ApplyBackgroundMask(croppedMask, *working);
-        } else {
-            ApplyBackgroundMask(backgroundMask_, *working);
-        }
-    }
-
+    PipelineSettings settings;
+    settings.removeTransparency = removeTransparencyEnabled_;
+    settings.useResize = downsizeEnabled_;
+    settings.targetWidth = downsizeTargetWidth_;
+    settings.targetHeight = downsizeTargetHeight_;
     const bool usePalette = usePaletteEnabled_ && !palette_.Empty();
-    const bool useResize = downsizeEnabled_;
-    const int targetWidth = downsizeTargetWidth_;
-    const int targetHeight = downsizeTargetHeight_;
 
-    conversionFuture_ = std::async(std::launch::async, [this, working, usePalette, useResize, targetWidth, targetHeight]() {
-        Image stage = std::move(*working);
-
-        // Palette is always swapped before resizing, so quantization sees full-res detail.
-        if (usePalette) {
-            Image quantized;
-            ConvertImage(stage, palette_, quantized);
-            stage = std::move(quantized);
-        }
-
-        // If Maintain Ratio picked a same-aspect sampling rect this is a
-        // uniform scale, otherwise it stretches -- DownscaleImage resizes
-        // each axis independently via nearest-neighbor, so it never invents
-        // a color outside the palette we just quantized to.
-        if (useResize) {
-            Image resized;
-            DownscaleImage(stage, targetWidth, targetHeight, resized);
-            stage = std::move(resized);
-        }
-
-        // Resizing/masking can leave partial alpha; force opaque-or-transparent.
-        BinarizeAlpha(stage);
-
-        resultImage_ = std::move(stage);
+    conversionFuture_ = std::async(std::launch::async, [this, source, mask, settings, crop, usePalette]() {
+        resultImage_ = RunPipeline(*source, settings, mask.get(), crop, usePalette ? &palette_ : nullptr);
     });
+}
+
+void Application::DoConvertAll() {
+    if (batchPaths_.empty() || converting_) {
+        return;
+    }
+
+    NFD::UniquePathN outDir;
+    const nfdresult_t dialogResult = NFD::PickFolder(outDir, kDefaultConvertedDir);
+    if (dialogResult == NFD_ERROR) {
+        statusMessage_ = std::string("File dialog error: ") + NFD::GetError();
+        return;
+    }
+    if (dialogResult != NFD_OKAY) {
+        return;
+    }
+
+    converting_ = true;
+    batchConverting_ = true;
+    batchOutputDir_ = std::filesystem::path(outDir.get());
+    batchTotal_ = static_cast<int>(batchPaths_.size());
+    batchDone_ = 0;
+    batchSaved_ = 0;
+    batchFailed_ = 0;
+    batchFirstError_.clear();
+    statusMessage_ = "Converting...";
+
+    // Same snapshotting rule as DoConvert(). The settings apply to every image;
+    // the per-image bits are:
+    //  - sampling rect: the user's rect for images the same size as the active
+    //    one, otherwise the centered aspect-fit rect for that image;
+    //  - background mask: the previewed one (including manual include/exclude
+    //    clicks) for the active image, auto-detected at the current tolerance
+    //    for the rest.
+    const bool useCrop = downsizeEnabled_ && downsizeMaintainRatio_;
+    const CropRect userCrop = downsizeCropRect_;
+    const int activeWidth = sourceImage_.Width();
+    const int activeHeight = sourceImage_.Height();
+    const size_t activeIndex = activeBatchIndex_;
+    const bool maskActive = removeBackgroundEnabled_ && backgroundMask_.MatchesSize(activeWidth, activeHeight);
+    Mask activeMask;
+    if (maskActive) {
+        activeMask = backgroundMask_;
+    }
+    const bool removeBackground = removeBackgroundEnabled_;
+    const double tolerance = static_cast<double>(backgroundTolerance_);
+
+    PipelineSettings settings;
+    settings.removeTransparency = removeTransparencyEnabled_;
+    settings.useResize = downsizeEnabled_;
+    settings.targetWidth = downsizeTargetWidth_;
+    settings.targetHeight = downsizeTargetHeight_;
+
+    Palette palette;
+    if (usePaletteEnabled_ && !palette_.Empty()) {
+        palette = palette_;
+    }
+
+    conversionFuture_ = std::async(
+        std::launch::async,
+        [this, paths = batchPaths_, outputDir = batchOutputDir_, settings, useCrop, userCrop, activeWidth, activeHeight,
+         activeIndex, activeMask = std::move(activeMask), maskActive, baseName = std::string(batchBaseName_[0] ? batchBaseName_ : "converted"), removeBackground, tolerance,
+         palette = std::move(palette)]() {
+            const size_t indexWidth = std::max<size_t>(2, std::to_string(paths.size()).size());
+            for (size_t i = 0; i < paths.size(); ++i) {
+                std::string error;
+                Image source;
+                bool ok = source.LoadFromFile(paths[i], &error);
+                if (ok) {
+                    CropRect crop;
+                    if (useCrop) {
+                        const bool sameAsActive = source.Width() == activeWidth && source.Height() == activeHeight;
+                        crop = (sameAsActive && !userCrop.Empty())
+                                   ? userCrop
+                                   : ComputeAspectFitRect(source.Width(), source.Height(), settings.targetWidth,
+                                                          settings.targetHeight);
+                    }
+
+                    Mask autoMask;
+                    const Mask* mask = nullptr;
+                    if (i == activeIndex && maskActive) {
+                        mask = &activeMask;
+                    } else if (removeBackground) {
+                        ComputeBackgroundMask(source, tolerance, autoMask);
+                        mask = &autoMask;
+                    }
+
+                    const Image result = RunPipeline(source, settings, mask, crop, palette.Empty() ? nullptr : &palette);
+
+                    // <baseName>_01, _02, ... in list order. Built from a UTF-8 -> path
+                    // conversion (not .string()) so non-ASCII names survive on Windows.
+                    std::string index = std::to_string(i + 1);
+                    if (index.size() < indexWidth) {
+                        index.insert(0, indexWidth - index.size(), '0');
+                    }
+                    std::filesystem::path outPath = outputDir / std::filesystem::path(std::u8string(
+                        reinterpret_cast<const char8_t*>(baseName.data()), baseName.size()));
+                    outPath += "_" + index + ".png";
+                    ok = result.SaveToPng(outPath, &error);
+                }
+
+                if (ok) {
+                    ++batchSaved_;
+                } else {
+                    if (batchFailed_ == 0) {
+                        batchFirstError_ = paths[i].filename().string() + ": " + error;
+                    }
+                    ++batchFailed_;
+                }
+                ++batchDone_;
+            }
+        });
 }
 
 void Application::RenderUi() {
@@ -542,7 +730,7 @@ void Application::RenderUi() {
     ImGui::Begin("PixieMain", nullptr, kMainFlags);
 
     ImGui::BeginDisabled(converting_);
-    if (ImGui::Button("Open Image...")) {
+    if (ImGui::Button("Open Image(s)...")) {
         DoOpenImage();
     }
     ImGui::SameLine();
@@ -565,9 +753,21 @@ void Application::RenderUi() {
     }
     ImGui::EndDisabled();
 
+    ImGui::SameLine();
+    ImGui::BeginDisabled(batchPaths_.size() < 2 || converting_);
+    const std::string convertAllLabel = "Convert All (" + std::to_string(batchPaths_.size()) + ") To Folder...";
+    if (ImGui::Button(convertAllLabel.c_str())) {
+        DoConvertAll();
+    }
+    ImGui::EndDisabled();
+
     if (converting_) {
         ImGui::SameLine();
-        ImGui::TextUnformatted("Converting...");
+        if (batchConverting_) {
+            ImGui::Text("Converting %d/%d...", batchDone_.load(), batchTotal_);
+        } else {
+            ImGui::TextUnformatted("Converting...");
+        }
     }
 
     if (!statusMessage_.empty()) {
@@ -613,6 +813,31 @@ void Application::RenderUi() {
         }
     }
     ImGui::EndChild(); // PaletteSwatches
+
+    if (batchPaths_.size() > 1) {
+        ImGui::Separator();
+        ImGui::Text("Images (%zu)", batchPaths_.size());
+        ImGui::BeginChild("BatchImages", ImVec2(0.0f, 120.0f), ImGuiChildFlags_Borders);
+        ImGui::BeginDisabled(converting_);
+        for (size_t i = 0; i < batchPaths_.size(); ++i) {
+            ImGui::PushID(static_cast<int>(i));
+            const std::string name = batchPaths_[i].filename().string();
+            if (ImGui::Selectable(name.c_str(), i == activeBatchIndex_)) {
+                SelectBatchImage(i);
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndDisabled();
+        ImGui::EndChild();
+        ImGui::TextUnformatted("Asset name");
+        ImGui::BeginDisabled(converting_);
+        ImGui::SetNextItemWidth(-1.0f);
+        ImGui::InputText("##BatchBaseName", batchBaseName_, sizeof(batchBaseName_));
+        ImGui::EndDisabled();
+        const char* shownName = batchBaseName_[0] ? batchBaseName_ : "converted";
+        ImGui::TextDisabled("Output: %s_01, %s_02, ...", shownName, shownName);
+        ImGui::TextDisabled("Tool settings apply to all images");
+    }
 
     ImGui::Separator();
     ImGui::TextUnformatted("Tools");
