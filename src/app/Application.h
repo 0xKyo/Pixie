@@ -127,6 +127,10 @@ private:
     std::filesystem::path batchOutputDir_;
     // UTF-8 base name for Convert All outputs (<name>_01.png, ...); defaults to the first image's name.
     char batchBaseName_[128] = "converted";
+    // When true, Convert All keeps each source file's own name (<stem>.png) instead of <baseName>_NN.
+    bool batchKeepName_ = false;
+    // When true, Save Result / Convert All write .aseprite files instead of PNG.
+    bool convertToAseprite_ = false;
 
     std::string statusMessage_;
     std::string lastError_;

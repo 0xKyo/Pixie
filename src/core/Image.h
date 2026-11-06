@@ -20,6 +20,9 @@ public:
     // Saves as PNG, inferring nothing about `path` — the extension is not modified.
     bool SaveToPng(const std::filesystem::path& path, std::string* error = nullptr) const;
 
+    // Saves as a single-frame, single-layer Aseprite (.ase/.aseprite) file, RGBA color mode.
+    bool SaveToAseprite(const std::filesystem::path& path, std::string* error = nullptr) const;
+
     void Resize(int width, int height);
     void Clear();
 

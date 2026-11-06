@@ -10,6 +10,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <set>
 
 #include "app/TextureHelper.h"
 #include "core/Converter.h"
@@ -558,19 +559,22 @@ void Application::DoSaveResult() {
     }
 
     NFD::UniquePathN outPath;
+    const bool ase = convertToAseprite_;
     const nfdnfilteritem_t filters[] = {
-        {PIXIE_NSTR("PNG Image"), PIXIE_NSTR("png")},
+        ase ? nfdnfilteritem_t{PIXIE_NSTR("Aseprite"), PIXIE_NSTR("aseprite")}
+            : nfdnfilteritem_t{PIXIE_NSTR("PNG Image"), PIXIE_NSTR("png")},
     };
 
+    const NativeString ext = ase ? NativeString(PIXIE_NSTR(".aseprite")) : NativeString(PIXIE_NSTR(".png"));
     const NativeString defaultName = sourcePath_.empty()
-                                          ? NativeString(PIXIE_NSTR("converted.png"))
-                                          : sourcePath_.stem().native() + NativeString(PIXIE_NSTR(".png"));
+                                          ? NativeString(PIXIE_NSTR("converted")) + ext
+                                          : sourcePath_.stem().native() + ext;
 
     const nfdresult_t result = NFD::SaveDialog(outPath, filters, 1, kDefaultConvertedDir, defaultName.c_str());
     if (result == NFD_OKAY) {
         const std::filesystem::path path(outPath.get());
         std::string error;
-        if (resultImage_.SaveToPng(path, &error)) {
+        if (ase ? resultImage_.SaveToAseprite(path, &error) : resultImage_.SaveToPng(path, &error)) {
             statusMessage_ = "Saved: " + path.filename().string();
         } else {
             statusMessage_ = "Failed to save: " + error;
@@ -668,8 +672,9 @@ void Application::DoConvertAll() {
         std::launch::async,
         [this, paths = batchPaths_, outputDir = batchOutputDir_, settings, useCrop, userCrop, activeWidth, activeHeight,
          activeIndex, activeMask = std::move(activeMask), maskActive, baseName = std::string(batchBaseName_[0] ? batchBaseName_ : "converted"), removeBackground, tolerance,
-         palette = std::move(palette)]() {
+         keepName = batchKeepName_, ase = convertToAseprite_, palette = std::move(palette)]() {
             const size_t indexWidth = std::max<size_t>(2, std::to_string(paths.size()).size());
+            std::set<std::filesystem::path::string_type> usedStems;
             for (size_t i = 0; i < paths.size(); ++i) {
                 std::string error;
                 Image source;
@@ -697,14 +702,28 @@ void Application::DoConvertAll() {
 
                     // <baseName>_01, _02, ... in list order. Built from a UTF-8 -> path
                     // conversion (not .string()) so non-ASCII names survive on Windows.
-                    std::string index = std::to_string(i + 1);
-                    if (index.size() < indexWidth) {
-                        index.insert(0, indexWidth - index.size(), '0');
+                    std::filesystem::path outPath;
+                    if (keepName) {
+                        // Keep the source name; if two sources share a stem (different
+                        // folders), add _2, _3, ... so one doesn't overwrite the other.
+                        const std::filesystem::path stem = paths[i].stem();
+                        std::filesystem::path candidate = stem;
+                        for (int n = 2; !usedStems.insert(candidate.native()).second; ++n) {
+                            candidate = stem;
+                            candidate += "_" + std::to_string(n);
+                        }
+                        outPath = outputDir / candidate;
+                    } else {
+                        std::string index = std::to_string(i + 1);
+                        if (index.size() < indexWidth) {
+                            index.insert(0, indexWidth - index.size(), '0');
+                        }
+                        outPath = outputDir / std::filesystem::path(std::u8string(
+                            reinterpret_cast<const char8_t*>(baseName.data()), baseName.size()));
+                        outPath += "_" + index;
                     }
-                    std::filesystem::path outPath = outputDir / std::filesystem::path(std::u8string(
-                        reinterpret_cast<const char8_t*>(baseName.data()), baseName.size()));
-                    outPath += "_" + index + ".png";
-                    ok = result.SaveToPng(outPath, &error);
+                    outPath += ase ? ".aseprite" : ".png";
+                    ok = ase ? result.SaveToAseprite(outPath, &error) : result.SaveToPng(outPath, &error);
                 }
 
                 if (ok) {
@@ -748,7 +767,7 @@ void Application::RenderUi() {
 
     ImGui::SameLine();
     ImGui::BeginDisabled(converting_ || resultWidth_ <= 0);
-    if (ImGui::Button("Save Result As PNG...")) {
+    if (ImGui::Button(convertToAseprite_ ? "Save Result As Aseprite..." : "Save Result As PNG...")) {
         DoSaveResult();
     }
     ImGui::EndDisabled();
@@ -759,6 +778,11 @@ void Application::RenderUi() {
     if (ImGui::Button(convertAllLabel.c_str())) {
         DoConvertAll();
     }
+    ImGui::EndDisabled();
+
+    ImGui::SameLine();
+    ImGui::BeginDisabled(converting_);
+    ImGui::Checkbox("Convert To Aseprite", &convertToAseprite_);
     ImGui::EndDisabled();
 
     if (converting_) {
@@ -829,13 +853,20 @@ void Application::RenderUi() {
         }
         ImGui::EndDisabled();
         ImGui::EndChild();
-        ImGui::TextUnformatted("Asset name");
         ImGui::BeginDisabled(converting_);
-        ImGui::SetNextItemWidth(-1.0f);
-        ImGui::InputText("##BatchBaseName", batchBaseName_, sizeof(batchBaseName_));
+        ImGui::Checkbox("Keep Name", &batchKeepName_);
         ImGui::EndDisabled();
-        const char* shownName = batchBaseName_[0] ? batchBaseName_ : "converted";
-        ImGui::TextDisabled("Output: %s_01, %s_02, ...", shownName, shownName);
+        if (batchKeepName_) {
+            ImGui::TextDisabled("Output: each image keeps its own name");
+        } else {
+            ImGui::TextUnformatted("Asset name");
+            ImGui::BeginDisabled(converting_);
+            ImGui::SetNextItemWidth(-1.0f);
+            ImGui::InputText("##BatchBaseName", batchBaseName_, sizeof(batchBaseName_));
+            ImGui::EndDisabled();
+            const char* shownName = batchBaseName_[0] ? batchBaseName_ : "converted";
+            ImGui::TextDisabled("Output: %s_01, %s_02, ...", shownName, shownName);
+        }
         ImGui::TextDisabled("Tool settings apply to all images");
     }
 
