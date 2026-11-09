@@ -6,6 +6,10 @@
 
 #include <nfd.hpp>
 
+#include <filesystem>
+
+#include "core/formats/ImageFile.h"
+
 namespace pixie::app {
 
 Application::~Application() {
@@ -49,8 +53,23 @@ bool Application::CreateWindowAndRenderer() {
     SDL_SetRenderVSync(context_.renderer, 1);
     SDL_SetWindowPosition(context_.window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
     SDL_MaximizeWindow(context_.window);
+    SetWindowIcon();
     SDL_ShowWindow(context_.window); // created hidden so it never flashes at the small size
     return true;
+}
+
+// Loads icon/pixie.png from next to the executable; a missing file just leaves the default icon.
+void Application::SetWindowIcon() {
+    const char* executableFolder = SDL_GetBasePath(); // owned by SDL
+    if (!executableFolder) return;
+    graphics::Image icon;
+    if (!formats::LoadImageFile(std::filesystem::path(executableFolder) / "icon" / "pixie.png", icon)) return;
+
+    SDL_Surface* surface = SDL_CreateSurfaceFrom(icon.Width(), icon.Height(), SDL_PIXELFORMAT_RGBA32,
+                                                 icon.MutablePixels(), icon.Width() * 4);
+    if (!surface) return;
+    SDL_SetWindowIcon(context_.window, surface); // SDL copies the pixels, so `icon` can go out of scope
+    SDL_DestroySurface(surface);
 }
 
 void Application::InitImGui() {

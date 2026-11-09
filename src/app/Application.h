@@ -24,6 +24,7 @@ public:
 
 private:
     bool CreateWindowAndRenderer();
+    void SetWindowIcon();
     void InitImGui();
     void Shutdown();
     void RenderCurrentScreen();

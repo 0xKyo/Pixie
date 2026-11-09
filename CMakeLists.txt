@@ -2,6 +2,10 @@ cmake_minimum_required(VERSION 3.23)
 
 project(Pixie LANGUAGES CXX)
 
+if(WIN32)
+  enable_language(RC)
+endif()
+
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -110,6 +114,9 @@ endif()
 if(WIN32)
   # GUI subsystem: no console window is allocated when launching Pixie.exe.
   set_target_properties(Pixie PROPERTIES WIN32_EXECUTABLE TRUE)
+
+  # The .exe's icon (Explorer, taskbar); the window icon is loaded from resources/icon at runtime.
+  target_sources(Pixie PRIVATE resources/pixie.rc)
 endif()
 
 set_property(DIRECTORY ${CMAKE_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT Pixie)
@@ -119,6 +126,13 @@ add_custom_command(TARGET Pixie POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_directory
           ${CMAKE_SOURCE_DIR}/assets
           $<TARGET_FILE_DIR:Pixie>/assets
+)
+
+# The window icon is read from <exe folder>/icon/pixie.png.
+add_custom_command(TARGET Pixie POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_directory
+          ${CMAKE_SOURCE_DIR}/resources/icon
+          $<TARGET_FILE_DIR:Pixie>/icon
 )
 
 # On Windows, vcpkg's applocal deployment (enabled by default via the vcpkg
