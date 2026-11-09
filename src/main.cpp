@@ -12,15 +12,14 @@
 #include "app/Application.h"
 
 int main(int, char**) {
-    pixie::Application app;
-    if (!app.Init()) {
-        const std::string message = "Failed to initialize Pixie: " + app.LastError();
+    pixie::app::Application application;
+    if (!application.Init()) {
+        const std::string message = "Failed to initialize Pixie: " + application.LastError();
         std::fprintf(stderr, "%s\n", message.c_str());
 #ifdef _WIN32
-        // Pixie runs without an attached console, so stderr alone would be invisible.
-        MessageBoxA(nullptr, message.c_str(), "Pixie", MB_OK | MB_ICONERROR);
+        MessageBoxA(nullptr, message.c_str(), "Pixie", MB_OK | MB_ICONERROR); // there is no console to print to
 #endif
         return 1;
     }
-    return app.Run();
+    return application.Run();
 }

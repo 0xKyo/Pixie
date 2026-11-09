@@ -76,6 +76,22 @@ cmake -B build/vs -G "Visual Studio 17 2022" -A x64 -DCMAKE_TOOLCHAIN_FILE="$env
 
 ## Usage
 
+Pixie opens on an **Asset Viewer**. The first time, it asks for your assets
+folder (remembered afterwards; change it with **Change Folder...**). It scans
+the folder recursively and shows a thumbnail grid of every `.png`, `.jpg` and
+`.aseprite`. A base image and its conversion are paired by folder + name
+(`hero.png` <-> `hero.aseprite`) and shown as one asset; a green **ASE** chip
+means it already has a converted version.
+
+- **Click** an asset to open it in the converter (base on the left, existing
+  `.aseprite` on the right). **Save Beside Original** writes
+  `<name>.aseprite` next to the PNG/JPG, asking before overwriting.
+- **Ctrl+click** several assets, then **Convert Selected** to apply the same
+  tools to all and write each `.aseprite` beside its original.
+- Search, and filter by Converted / Not converted, from the top bar.
+
+### Converter
+
 1. **Open Image(s)...** — load one or more source images (PNG, JPEG, BMP, TGA, GIF, PSD, HDR, ...).
    With several selected, they're listed in the sidebar; click one to preview
    and tune the tools on it. **Convert All (N) To Folder...** then applies the
@@ -94,12 +110,28 @@ cmake -B build/vs -G "Visual Studio 17 2022" -A x64 -DCMAKE_TOOLCHAIN_FILE="$env
 
 ## Project layout
 
+Each folder is one namespace (`src/core/graphics` -> `pixie::graphics`).
+`core/` has no SDL or UI code; `app/` builds the program on top of it.
+See [Architecture.md](Architecture.md) for layers, flows, threading and conventions.
+
 ```
 src/
-  core/        Image IO, Palette (.gpl) parsing, sRGB<->Lab + CIEDE2000,
-               background Mask, Crop, Downscale, palette Converter
-  app/         SDL3 window/renderer, Dear ImGui UI, texture upload helpers
   main.cpp
+  core/
+    color/        pixie::color        Rgba, Lab, CIEDE2000, Palette (.gpl)
+    graphics/     pixie::graphics     Image, Mask + background detection, Crop,
+                                      Resize/thumbnails, PaletteRemap
+    formats/      pixie::formats      Load/save images (stb), Aseprite reader/writer
+    audio/        pixie::audio        AudioClip decoding (miniaudio, stb_vorbis), waveform
+    library/      pixie::library      Asset scanning/pairing, variation groups
+    spritesheet/  pixie::spritesheet  Atlas packing + layout JSON
+  app/            pixie::app          Application (window, main loop), AppContext
+    views/        pixie::views        LibraryView, PreviewPanel, ConverterView,
+                                      SamplingBoxEditor
+    services/     pixie::services     Settings, ProjectStore, ThumbnailCache,
+                                      AudioPlayer, ExternalTools, SpriteSheetExport,
+                                      ConversionPipeline, BatchConversion
+    util/         pixie::util         Text formatting, dialogs, textures, ImGui helpers
 assets/
   source/      Sample source image
   palettes/    Sample .gpl palettes

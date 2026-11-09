@@ -15,35 +15,82 @@ find_package(SDL3 CONFIG REQUIRED)
 find_package(imgui CONFIG REQUIRED)
 find_package(Stb REQUIRED)
 find_package(nfd CONFIG REQUIRED)
+find_path(MINIAUDIO_INCLUDE_DIRS "miniaudio.h" REQUIRED)
 
 # ---------------------------------------------------------------------------
 # Pixie
 # ---------------------------------------------------------------------------
 add_executable(Pixie
   src/main.cpp
-  src/core/ColorMath.h
-  src/core/ColorMath.cpp
-  src/core/Palette.h
-  src/core/Palette.cpp
-  src/core/Image.h
-  src/core/Image.cpp
-  src/core/Mask.h
-  src/core/Mask.cpp
-  src/core/Crop.h
-  src/core/Crop.cpp
-  src/core/Downscale.h
-  src/core/Downscale.cpp
-  src/core/Downsize.h
-  src/core/Downsize.cpp
-  src/core/Converter.h
-  src/core/Converter.cpp
-  src/app/Application.h
+  src/app/AppContext.cpp
+  src/app/AppContext.h
   src/app/Application.cpp
-  src/app/TextureHelper.h
-  src/app/TextureHelper.cpp
+  src/app/Application.h
+  src/app/services/AudioPlayer.cpp
+  src/app/services/AudioPlayer.h
+  src/app/services/BatchConversion.cpp
+  src/app/services/BatchConversion.h
+  src/app/services/ConversionPipeline.cpp
+  src/app/services/ConversionPipeline.h
+  src/app/services/ExternalTools.cpp
+  src/app/services/ExternalTools.h
+  src/app/services/ProjectStore.cpp
+  src/app/services/ProjectStore.h
+  src/app/services/Settings.cpp
+  src/app/services/Settings.h
+  src/app/services/SpriteSheetExport.cpp
+  src/app/services/SpriteSheetExport.h
+  src/app/services/ThumbnailCache.cpp
+  src/app/services/ThumbnailCache.h
+  src/app/util/Dialogs.cpp
+  src/app/util/Dialogs.h
+  src/app/util/Gui.cpp
+  src/app/util/Gui.h
+  src/app/util/Platform.h
+  src/app/util/Text.cpp
+  src/app/util/Text.h
+  src/app/util/Texture.cpp
+  src/app/util/Texture.h
+  src/app/views/ConverterView.cpp
+  src/app/views/ConverterView.h
+  src/app/views/LibraryView.cpp
+  src/app/views/LibraryView.h
+  src/app/views/PreviewPanel.cpp
+  src/app/views/PreviewPanel.h
+  src/app/views/SamplingBoxEditor.cpp
+  src/app/views/SamplingBoxEditor.h
+  src/core/audio/AudioClip.cpp
+  src/core/audio/AudioClip.h
+  src/core/audio/StbVorbis.cpp
+  src/core/color/Color.cpp
+  src/core/color/Color.h
+  src/core/color/Palette.cpp
+  src/core/color/Palette.h
+  src/core/formats/Aseprite.cpp
+  src/core/formats/Aseprite.h
+  src/core/formats/BinaryFile.cpp
+  src/core/formats/BinaryFile.h
+  src/core/formats/ImageFile.cpp
+  src/core/formats/ImageFile.h
+  src/core/graphics/Crop.cpp
+  src/core/graphics/Crop.h
+  src/core/graphics/Image.cpp
+  src/core/graphics/Image.h
+  src/core/graphics/Mask.cpp
+  src/core/graphics/Mask.h
+  src/core/graphics/PaletteRemap.cpp
+  src/core/graphics/PaletteRemap.h
+  src/core/graphics/Resize.cpp
+  src/core/graphics/Resize.h
+  src/core/library/Asset.cpp
+  src/core/library/Asset.h
+  src/core/library/VariationGroups.cpp
+  src/core/library/VariationGroups.h
+  src/core/spritesheet/SpriteSheet.cpp
+  src/core/spritesheet/SpriteSheet.h
 )
 
-target_include_directories(Pixie PRIVATE src ${Stb_INCLUDE_DIR})
+target_include_directories(Pixie PRIVATE src ${Stb_INCLUDE_DIR} ${MINIAUDIO_INCLUDE_DIRS})
 
 target_link_libraries(Pixie PRIVATE
   SDL3::SDL3
