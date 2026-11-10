@@ -31,8 +31,8 @@ struct AppContext {
     std::string statusMessage;           // one line of feedback shown at the top
     Screen screen = Screen::FolderPicker;
 
-    // Re-reads the library folder and drops selected keys that no longer exist.
-    void RescanLibrary();
+    // Re-reads the library folder (turning any MP3 into a WAV first); returns how many MP3s were converted.
+    size_t RescanLibrary();
     // Switches to a new library folder: saves it, rescans, loads its projects and shows the grid.
     void OpenLibrary(const std::filesystem::path& root);
     // Opens the library folder remembered in settings; false if there is none or it's gone.

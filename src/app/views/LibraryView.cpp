@@ -6,9 +6,10 @@
 #include <cmath>
 
 #include "app/services/ExternalTools.h"
-#include "app/services/SpriteSheetExport.h"
+#include "app/services/ProjectExport.h"
 #include "app/util/Gui.h"
 #include "app/util/Text.h"
+#include "core/audio/SilenceTrim.h"
 
 namespace pixie::views {
 
@@ -108,7 +109,9 @@ void LibraryView::Render() {
     const std::vector<int> visible = VisibleAssetIndices();
     const std::vector<library::GridTile> tiles = library::BuildGridTiles(context_.assets, visible, expandedGroups_);
 
-    ImGui::TextDisabled("%zu of %zu assets  |  click to open, Ctrl+click to select several, double-click a stack to expand it",
+    RenderToggleVariationsButton(tiles);
+    ImGui::SameLine();
+    ImGui::TextDisabled("%zu of %zu assets  |  click to open, Ctrl/Shift+click to select several, double-click a stack to expand it",
                         visible.size(), context_.assets.size());
     if (!context_.statusMessage.empty()) {
         ImGui::SameLine();
@@ -136,7 +139,10 @@ void LibraryView::Render() {
 void LibraryView::RenderToolbar() {
     if (ImGui::Button("Change Folder...")) PickLibraryFolder();
     ImGui::SameLine();
-    if (ImGui::Button("Refresh")) context_.RescanLibrary();
+    if (ImGui::Button("Refresh")) {
+        const size_t converted = context_.RescanLibrary();
+        if (converted > 0 && preview_.IsOpen() && preview_.CurrentAsset().IsAudio()) preview_.Close(); // its file may be gone
+    }
     ImGui::SameLine();
     if (ImGui::Button("Converter")) context_.screen = app::Screen::Converter;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open the converter without a specific asset");
@@ -170,6 +176,23 @@ void LibraryView::RenderFilterBar() {
     if (ImGui::Button(convertLabel.c_str())) ConvertSelected();
     ImGui::SameLine();
     if (ImGui::Button("Clear Selection")) context_.selectedKeys.clear();
+    ImGui::EndDisabled();
+}
+
+// Hides all variation groups if any is open, otherwise shows them all.
+void LibraryView::RenderToggleVariationsButton(const std::vector<library::GridTile>& tiles) {
+    const bool anyOpen = std::any_of(tiles.begin(), tiles.end(), [](const library::GridTile& tile) { return tile.IsInGroup() && !tile.isCollapsedStack; });
+    const bool anyGroup = std::any_of(tiles.begin(), tiles.end(), [](const library::GridTile& tile) { return tile.IsInGroup(); });
+    ImGui::BeginDisabled(!anyGroup);
+    if (ImGui::Button(anyOpen ? "Hide All Variations" : "Show All Variations")) {
+        if (anyOpen) {
+            expandedGroups_.clear();
+        } else {
+            for (const library::GridTile& tile : tiles) {
+                if (tile.IsInGroup()) expandedGroups_.insert(tile.groupKey);
+            }
+        }
+    }
     ImGui::EndDisabled();
 }
 
@@ -242,7 +265,7 @@ void LibraryView::RenderProjectBar() {
     ImGui::EndDisabled();
 
     ImGui::SameLine();
-    if (ImGui::Button("Export Spritesheet...")) ExportSpriteSheet();
+    if (ImGui::Button("Export...")) ExportProject();
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("Packs every converted (.aseprite) asset of the project into one atlas PNG\n"
                           "plus a layout JSON (positions, durations, tags) for the Godot importer");
@@ -314,6 +337,7 @@ void LibraryView::RenderGrid(const std::vector<library::GridTile>& tiles) {
     const float tileHeight = tileSize_ + ImGui::GetTextLineHeight() + 8.0f;
     const int columns = std::max(1, static_cast<int>((ImGui::GetContentRegionAvail().x + kTileSpacing) / (tileSize_ + kTileSpacing)));
     const int rows = static_cast<int>((tiles.size() + columns - 1) / columns);
+    shownTiles_ = &tiles;
 
     ImGuiListClipper clipper;
     clipper.Begin(rows, tileHeight + kTileSpacing);
@@ -460,6 +484,9 @@ void LibraryView::RenderTileMenu(const library::GridTile& tile, const std::set<s
 
     if (asset.IsAudio()) {
         if (ImGui::MenuItem("Open in Audacity")) ShowToolResult(services::OpenInAudacity(asset.audioPath, context_.settings));
+        const bool canTrim = audio::CanTrim(asset.audioPath);
+        if (ImGui::MenuItem("Trim Silence", nullptr, false, canTrim)) preview_.OpenForTrim(asset);
+        if (!canTrim && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Only WAV files can be trimmed");
     } else {
         if (ImGui::MenuItem("Convert...", nullptr, false, asset.HasBaseImage())) converter_.OpenAsset(asset);
         if (ImGui::MenuItem("Open in Aseprite", nullptr, false, asset.HasAseprite())) ShowToolResult(services::OpenInAseprite(asset.asepritePath));
@@ -469,20 +496,24 @@ void LibraryView::RenderTileMenu(const library::GridTile& tile, const std::set<s
     if (!context_.projects.HasActive()) {
         ImGui::TextDisabled("Select or create a project first");
     } else {
-        const bool allInProject = std::all_of(keys.begin(), keys.end(), [&](const std::string& key) {
+        // Right-clicking a selected tile acts on the whole selection, like Explorer.
+        const bool tileIsSelected = std::all_of(keys.begin(), keys.end(), [&](const std::string& key) { return context_.selectedKeys.count(key) > 0; });
+        const std::set<std::string>& targets = tileIsSelected ? context_.selectedKeys : keys;
+        const bool allInProject = std::all_of(targets.begin(), targets.end(), [&](const std::string& key) {
             return context_.projects.ActiveContains(key);
         });
-        const std::string suffix = tile.isCollapsedStack ? " (all " + std::to_string(keys.size()) + " variations)" : "";
+        const bool several = targets.size() > 1;
+        const std::string suffix = several ? " (" + std::to_string(targets.size()) + " assets)" : "";
         if (allInProject) {
-            if (ImGui::MenuItem(("Remove from project" + suffix).c_str())) context_.projects.RemoveFromActive(keys);
+            if (ImGui::MenuItem(("Remove from project" + suffix).c_str())) context_.projects.RemoveFromActive(targets);
         } else if (ImGui::MenuItem(("Add to project" + suffix).c_str())) {
-            context_.projects.AddToActive(keys);
+            context_.projects.AddToActive(targets);
         }
     }
     ImGui::EndPopup();
 }
 
-// Click previews, Ctrl+click toggles selection, double-click opens or closes a variation group.
+// Explorer-style: click selects and previews, Ctrl+click toggles, Shift+click selects a range; double-click toggles a group.
 void LibraryView::HandleTileClicks(const library::GridTile& tile, const std::set<std::string>& keys, bool clicked, bool hovered,
                                    bool selected) {
     if (hovered && tile.IsInGroup() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
@@ -494,7 +525,29 @@ void LibraryView::HandleTileClicks(const library::GridTile& tile, const std::set
     }
     if (!clicked) return;
 
-    if (ImGui::GetIO().KeyCtrl) {
+    const ImGuiIO& io = ImGui::GetIO();
+    auto tileIndexOf = [&](int assetIndex) {
+        if (!shownTiles_) return -1;
+        for (size_t i = 0; i < shownTiles_->size(); ++i) {
+            if ((*shownTiles_)[i].assetIndex == assetIndex) return static_cast<int>(i);
+        }
+        return -1;
+    };
+    const int clickedTile = tileIndexOf(tile.assetIndex);
+    const int anchorTile = tileIndexOf(selectionAnchor_);
+
+    if (io.KeyShift && anchorTile >= 0 && clickedTile >= 0) {
+        if (!io.KeyCtrl) context_.selectedKeys.clear();
+        const int first = std::min(anchorTile, clickedTile);
+        const int last = std::max(anchorTile, clickedTile);
+        for (int i = first; i <= last; ++i) {
+            for (const std::string& key : KeysOf((*shownTiles_)[i])) context_.selectedKeys.insert(key);
+        }
+        return; // the anchor stays where it was
+    }
+
+    selectionAnchor_ = tile.assetIndex;
+    if (io.KeyCtrl) {
         for (const std::string& key : keys) {
             if (selected) {
                 context_.selectedKeys.erase(key);
@@ -503,6 +556,7 @@ void LibraryView::HandleTileClicks(const library::GridTile& tile, const std::set
             }
         }
     } else {
+        context_.selectedKeys = keys;
         preview_.Open(context_.assets[tile.assetIndex]);
     }
 }
@@ -549,9 +603,9 @@ void LibraryView::ConvertSelected() {
     converter_.OpenBatch(std::move(baseImages), withoutBase);
 }
 
-void LibraryView::ExportSpriteSheet() {
+void LibraryView::ExportProject() {
     if (!context_.projects.HasActive()) return;
-    const std::string status = services::ExportSpriteSheet(context_.projects.Active(), context_.assets, context_.settings.libraryRoot);
+    const std::string status = services::ExportProject(context_.projects.Active(), context_.assets, context_.settings.libraryRoot);
     if (!status.empty()) context_.statusMessage = status;
 }
 

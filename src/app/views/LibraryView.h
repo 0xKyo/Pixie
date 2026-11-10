@@ -33,6 +33,7 @@ private:
     void RenderToolbar();
     void RenderFilterBar();
     void RenderTypeFilter();
+    void RenderToggleVariationsButton(const std::vector<library::GridTile>& tiles);
     void RenderProjectBar();
     void RenderNewProjectButton();
     void RenderDeleteProjectButton();
@@ -52,7 +53,7 @@ private:
     // Actions.
     void PickLibraryFolder();
     void ConvertSelected();
-    void ExportSpriteSheet();
+    void ExportProject();
     void ShowToolResult(const std::string& error);
 
     app::AppContext& context_;
@@ -63,6 +64,8 @@ private:
     ConversionFilter conversionFilter_ = ConversionFilter::All;
     bool kindVisible_[library::kAssetKindCount] = {true, true};
     float tileSize_ = 140.0f;
+    const std::vector<library::GridTile>* shownTiles_ = nullptr; // tiles of the current frame, for Shift+click ranges
+    int selectionAnchor_ = -1;                                    // asset index where a Shift range starts
     std::set<std::string> expandedGroups_; // variation groups shown one tile per variation
     ProjectScope projectScope_ = ProjectScope::OnlyProjectAssets;
     char newProjectName_[64] = "";

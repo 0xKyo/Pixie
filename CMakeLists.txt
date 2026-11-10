@@ -42,8 +42,8 @@ add_executable(Pixie
   src/app/services/ProjectStore.h
   src/app/services/Settings.cpp
   src/app/services/Settings.h
-  src/app/services/SpriteSheetExport.cpp
-  src/app/services/SpriteSheetExport.h
+  src/app/services/ProjectExport.cpp
+  src/app/services/ProjectExport.h
   src/app/services/ThumbnailCache.cpp
   src/app/services/ThumbnailCache.h
   src/app/util/Dialogs.cpp
@@ -65,7 +65,13 @@ add_executable(Pixie
   src/app/views/SamplingBoxEditor.h
   src/core/audio/AudioClip.cpp
   src/core/audio/AudioClip.h
+  src/core/audio/LoopMaker.cpp
+  src/core/audio/LoopMaker.h
+  src/core/audio/SilenceTrim.cpp
+  src/core/audio/SilenceTrim.h
   src/core/audio/StbVorbis.cpp
+  src/core/audio/WavWrite.cpp
+  src/core/audio/WavWrite.h
   src/core/color/Color.cpp
   src/core/color/Color.h
   src/core/color/Palette.cpp

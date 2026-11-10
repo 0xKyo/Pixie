@@ -1,6 +1,9 @@
 #pragma once
 
 #include <SDL3/SDL.h>
+#include <imgui.h>
+
+#include <algorithm>
 
 #include <cstdint>
 #include <string>
@@ -23,6 +26,7 @@ public:
     PreviewPanel& operator=(const PreviewPanel&) = delete;
 
     void Open(const library::Asset& asset);
+    void OpenForTrim(const library::Asset& asset); // opens an audio asset with trim mode on
     void Close(); // also frees textures, so call it before the renderer is destroyed
     [[nodiscard]] bool IsOpen() const { return open_; }
     [[nodiscard]] const library::Asset& CurrentAsset() const { return asset_; }
@@ -46,6 +50,16 @@ private:
 
     void RenderAudioAsset();
     void RenderWaveform();
+    void HandleWaveformMouse(ImVec2 origin, ImVec2 size);
+    void RenderTrimControls();
+    void BeginTrim();
+    void EndTrim();
+    void ApplyTrim();
+    void RenderLoopControls();
+    void BeginLoopMaker();
+    void EndLoopMaker();
+    void RefreshLoopPreview();
+    void ApplyLoop();
     void RenderAudioMetadata();
 
     void RenderNameEditor(const char* hint);
@@ -53,6 +67,23 @@ private:
 
     bool RenameAsset(const std::string& requestedName, std::string& error); // renames the files on disk
     void ShowToolResult(const std::string& error);                           // reports a failed Open in X
+
+    // Where the waveform is on screen, and conversions between sample frames and screen x.
+    struct WaveformArea {
+        ImVec2 origin;
+        ImVec2 size;
+        std::uint64_t frameCount;
+
+        [[nodiscard]] float ToX(std::uint64_t frame) const {
+            return origin.x + size.x * static_cast<float>(frame) / static_cast<float>(std::max<std::uint64_t>(1, frameCount));
+        }
+        [[nodiscard]] std::uint64_t ToFrame(float x) const {
+            const float fraction = std::clamp((x - origin.x) / size.x, 0.0f, 1.0f);
+            return static_cast<std::uint64_t>(fraction * static_cast<float>(frameCount));
+        }
+    };
+    enum class TrimHandle { None, Start, End };
+    void DrawTrimHandles(const WaveformArea& area) const;
 
     app::AppContext& context_;
     ConverterView& converter_;
@@ -83,6 +114,17 @@ private:
     std::string audioError_;
     FileInfo audioFile_;
     services::AudioPlayer player_;
+
+    // Trim mode: keep [trimStart_, trimEnd_) of the clip, in sample frames.
+    bool trimming_ = false;
+    std::uint64_t trimStart_ = 0;
+    std::uint64_t trimEnd_ = 0;
+    TrimHandle draggedHandle_ = TrimHandle::None;
+
+    // Make Loopable mode: clip_ holds the crossfaded preview and originalClip_ the untouched audio.
+    bool loopMaking_ = false;
+    audio::AudioClip originalClip_;
+    int crossfadeMs_ = 200;
 };
 
 } // namespace pixie::views

@@ -86,7 +86,8 @@ means it already has a converted version.
 - **Click** an asset to open it in the converter (base on the left, existing
   `.aseprite` on the right). **Save Beside Original** writes
   `<name>.aseprite` next to the PNG/JPG, asking before overwriting.
-- **Ctrl+click** several assets, then **Convert Selected** to apply the same
+- **Ctrl+click** toggles single assets and **Shift+click** selects the range from
+  the last clicked one (like Explorer). Then **Convert Selected** to apply the same
   tools to all and write each `.aseprite` beside its original.
 - Search, and filter by Converted / Not converted, from the top bar.
 
@@ -129,7 +130,7 @@ src/
     views/        pixie::views        LibraryView, PreviewPanel, ConverterView,
                                       SamplingBoxEditor
     services/     pixie::services     Settings, ProjectStore, ThumbnailCache,
-                                      AudioPlayer, ExternalTools, SpriteSheetExport,
+                                      AudioPlayer, ExternalTools, ProjectExport,
                                       ConversionPipeline, BatchConversion
     util/         pixie::util         Text formatting, dialogs, textures, ImGui helpers
 assets/

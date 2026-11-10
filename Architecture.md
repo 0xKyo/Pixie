@@ -41,7 +41,7 @@ Dependency rules:
 | `color/` | `pixie::color` | `Rgba` (8-bit RGBA), `Lab`, `ToLab`, `Ciede2000`; `Palette` (GIMP `.gpl`) |
 | `graphics/` | `pixie::graphics` | `Image` (pixel buffer, no IO); `Mask` + `DetectBackground`/`ToggleRegion`/`ApplyMask`; `CropRect`, `CropImage`, `CenteredRectWithAspect`; `ResizeNearest`, `MakeThumbnail`; `RemapToPalette`, `BinarizeAlpha`, `RemoveTransparency` |
 | `formats/` | `pixie::formats` | `LoadImageFile`, `SavePng`, `SaveAseprite` (stb_image); Aseprite reader (all frames, layers, tags, linked/compressed cels) and writer; `ReadWholeFile`/`WriteWholeFile` |
-| `audio/` | `pixie::audio` | `AudioClip`, `LoadClip` (WAV/MP3/FLAC via miniaudio, Ogg via stb_vorbis), `ComputeWaveform` |
+| `audio/` | `pixie::audio` | `AudioClip`, `LoadClip` (WAV/MP3/FLAC via miniaudio, Ogg via stb_vorbis), `ComputeWaveform`; `SilenceTrim`, `LoopMaker`, `WavWrite` (`FindSoundRange`, `TrimWavFile`) |
 | `library/` | `pixie::library` | `Asset`, `AssetKind`, `ScanFolder`; `VariationGroupKey`, `BuildGridTiles` |
 | `spritesheet/` | `pixie::spritesheet` | `Build`: packs Aseprite frames into an atlas + layout JSON |
 
@@ -51,7 +51,7 @@ Dependency rules:
 |---|---|---|
 | `app/` | `pixie::app` | `Application` (window, ImGui, main loop, screen switch); `AppContext` (shared state); `Screen` enum |
 | `views/` | `pixie::views` | `LibraryView` (folder picker, grid, filters, projects bar); `PreviewPanel` (side panel); `ConverterView` (conversion screen); `SamplingBoxEditor` (Downsize box drag/resize) |
-| `services/` | `pixie::services` | `Settings`, `ProjectStore`, `ThumbnailCache`, `AudioPlayer`, `ExternalTools` (Aseprite/Audacity), `SpriteSheetExport`, `ConversionPipeline` (`ConvertImage`), `BatchConversion` (`RunBatch`) |
+| `services/` | `pixie::services` | `Settings`, `ProjectStore`, `ThumbnailCache`, `AudioPlayer` (can be limited to a frame range and looped), `ExternalTools` (Aseprite/Audacity), `ProjectExport`, `ConversionPipeline` (`ConvertImage`), `BatchConversion` (`RunBatch`) |
 | `util/` | `pixie::util` | `Text` (formatting, UTF-8 paths), `Dialogs` (overwrite prompt), `Texture` (SDL upload), `Gui` (fullscreen window, fit helpers), `Platform.h` (`PIXIE_NSTR`, `NativeString`) |
 
 ## Object graph
@@ -89,6 +89,11 @@ Application
   conversion and search filters. `library::BuildGridTiles` collapses variation groups,
   and `RenderGrid` draws only the visible rows (ImGui list clipper). Thumbnails decode
   lazily within a per-frame time budget (`ThumbnailCache`).
+- **Trim Silence** (WAV only): right click an audio tile, or press the button in the panel,
+  to enter trim mode in `PreviewPanel`. `audio::FindSoundRange` proposes the cut points, the user
+  drags the two handles over the waveform, and `AudioPlayer::SetRange` makes playback cover only the
+  kept part. "Apply Trim" asks for confirmation and calls `audio::TrimWavFile`, which copies the kept
+  sample bytes into a new WAV (same format, other chunks preserved) and replaces the original.
 - **Preview**: clicking a tile calls `PreviewPanel::Open`, which loads the base image,
   every Aseprite frame (animated with the real frame durations), or the audio clip and
   its waveform (`AudioPlayer`).
@@ -99,9 +104,16 @@ Application
 - **Batch conversion**: `ConverterView::ConvertAllImages` fills a `services::BatchJob`
   and runs `RunBatch` on a worker. Progress goes through `BatchProgress`, whose
   `processed` counter is atomic.
-- **Spritesheet export**: `services::ExportSpriteSheet` collects the active project's
-  `.aseprite` files and calls `spritesheet::Build`. It writes `<name>.png` plus
-  `<name>_layout.json`, which the Godot importer reads.
+- **Make Loopable**: the panel swaps `clip_` for `audio::MakeLoopable(original, crossfade)`
+  (the tail is blended into the head with an equal-power crossfade, so the clip gets shorter),
+  plays it looped as a preview, and Apply writes it over the WAV via a temp file + rename.
+- **MP3 to WAV**: every `AppContext::RescanLibrary` decodes MP3s with `audio::LoadClip`,
+  writes a 16-bit `.wav` beside each (`audio::SaveWav`), deletes the MP3, rescans and
+  renames its key in every project to the WAV's key.
+- **Project export**: `services::ExportProject` asks for a folder. The active project's
+  `.aseprite` files go through `spritesheet::Build` and are written as
+  `<name>_atlas.png` plus `<name>_layout.json` (read by the Godot importer); its audio
+  files are copied into `<folder>/SFX/`.
 
 ## Threading
 
