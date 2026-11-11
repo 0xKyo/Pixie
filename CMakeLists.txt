@@ -30,6 +30,8 @@ add_executable(Pixie
   src/app/AppContext.h
   src/app/Application.cpp
   src/app/Application.h
+  src/app/services/AnimationImport.cpp
+  src/app/services/AnimationImport.h
   src/app/services/AudioPlayer.cpp
   src/app/services/AudioPlayer.h
   src/app/services/BatchConversion.cpp

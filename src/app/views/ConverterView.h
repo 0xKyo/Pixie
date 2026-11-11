@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "app/AppContext.h"
+#include "app/services/AnimationImport.h"
 #include "app/services/BatchConversion.h"
 #include "app/services/ConversionPipeline.h"
 #include "app/views/SamplingBoxEditor.h"
@@ -35,6 +36,8 @@ public:
     void OpenAsset(const library::Asset& asset);
     // Opens several images as a batch whose results are saved next to each original.
     void OpenBatch(std::vector<std::filesystem::path> paths, size_t skippedWithoutBase);
+    // Asks for a folder and opens its images as the frames of one animation (saved together as one .aseprite).
+    void ImportAnimationFromDialog();
 
 private:
     // The sidebar's tool switches.
@@ -56,12 +59,14 @@ private:
     void SaveResultBesideOriginal();
     void ConvertPreviewedImage();
     void ConvertAllImages();
+    void ConvertAnimation();
 
     // Layout.
     void RenderToolbar();
     void RenderSidebar();
     void RenderPalettePanel();
     void RenderBatchPanel();
+    void RenderAnimationOptions();
     void RenderToolsPanel();
     void RenderDownsizeTool();
     void RenderSourcePreview(float width);
@@ -75,6 +80,7 @@ private:
     void RecomputeBackgroundMask();
     void ResetSamplingBox();
     void FinishConversion();
+    [[nodiscard]] services::BatchJob BuildBatchJob() const; // tool settings and sources shared by batches and animations
     [[nodiscard]] services::ConversionSettings CurrentSettings() const;
     [[nodiscard]] bool IsSamplingBoxActive() const { return tools_.downsize && tools_.keepAspect; }
     [[nodiscard]] bool HasResult() const { return resultWidth_ > 0; }
@@ -102,10 +108,15 @@ private:
     bool batchKeepNames_ = false;
     bool batchBesideOriginals_ = false;             // write <original>.aseprite next to each source
     bool saveAsAseprite_ = false;
+    bool animationMode_ = false;              // the images are the frames of one animation, in order
+    std::string animationName_ = "animation"; // UTF-8, the suggested file name
+    int animationFrameDurationMs_ = 100;
 
     std::future<void> worker_;
     bool converting_ = false;
     bool convertingBatch_ = false;
+    bool convertingAnimation_ = false;
+    std::filesystem::path animationOutputPath_;
     int batchTotal_ = 0;
     std::filesystem::path batchOutputFolder_;
     services::BatchProgress batchProgress_;

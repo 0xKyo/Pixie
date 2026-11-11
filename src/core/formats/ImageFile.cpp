@@ -60,4 +60,11 @@ bool SaveAseprite(const graphics::Image& image, const std::filesystem::path& pat
     return WriteWholeFile(path, encoded.data(), encoded.size(), error);
 }
 
+bool SaveAsepriteAnimation(const std::vector<graphics::Image>& frames, int frameDurationMs, const std::filesystem::path& path,
+                           std::string* error) {
+    std::vector<unsigned char> encoded;
+    if (!EncodeAsepriteAnimation(frames, frameDurationMs, encoded, error)) return false;
+    return WriteWholeFile(path, encoded.data(), encoded.size(), error);
+}
+
 } // namespace pixie::formats

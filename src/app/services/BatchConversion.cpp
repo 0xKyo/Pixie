@@ -58,9 +58,21 @@ void BatchProgress::Reset() {
     firstError.clear();
 }
 
+graphics::Image ConvertBatchSource(const BatchJob& job, size_t sourceIndex, const graphics::Image& source) {
+    graphics::Mask automaticMask;
+    const graphics::Mask* mask = nullptr;
+    if (sourceIndex == job.previewIndex && job.previewMask) {
+        mask = &*job.previewMask;
+    } else if (job.removeBackground) {
+        graphics::DetectBackground(source, job.backgroundTolerance, automaticMask);
+        mask = &automaticMask;
+    }
+    const color::Palette* palette = job.palette.Empty() ? nullptr : &job.palette;
+    return ConvertImage(source, job.settings, mask, ChooseCrop(job, source), palette);
+}
+
 void RunBatch(const BatchJob& job, BatchProgress& progress) {
     std::set<std::filesystem::path::string_type> usedNames;
-    const color::Palette* palette = job.palette.Empty() ? nullptr : &job.palette;
 
     for (size_t index = 0; index < job.sources.size(); ++index) {
         const std::filesystem::path& sourcePath = job.sources[index];
@@ -73,16 +85,7 @@ void RunBatch(const BatchJob& job, BatchProgress& progress) {
         }
 
         if (ok) {
-            graphics::Mask automaticMask;
-            const graphics::Mask* mask = nullptr;
-            if (index == job.previewIndex && job.previewMask) {
-                mask = &*job.previewMask;
-            } else if (job.removeBackground) {
-                graphics::DetectBackground(source, job.backgroundTolerance, automaticMask);
-                mask = &automaticMask;
-            }
-
-            const graphics::Image result = ConvertImage(source, job.settings, mask, ChooseCrop(job, source), palette);
+            const graphics::Image result = ConvertBatchSource(job, index, source);
 
             std::filesystem::path outputPath = OutputPathWithoutExtension(job, index, usedNames);
             outputPath += job.saveAsAseprite ? ".aseprite" : ".png";

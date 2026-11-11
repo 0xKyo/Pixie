@@ -15,7 +15,7 @@ struct Source {
 };
 
 struct Options {
-    int maxWidth = 1024; // rows wrap at this width (a wider frame widens the atlas)
+    int maxWidth = 0;    // rows wrap at this width (a wider frame widens the atlas); 0 = pick the width that makes the atlas most square
     int padding = 0;     // empty pixels between frames
 };
 

@@ -30,6 +30,10 @@ bool DecodeAseprite(const unsigned char* data, size_t size, AsepriteAnimation& a
 // Decodes only the first frame (what a static preview or the converter needs).
 bool DecodeAsepriteFirstFrame(const unsigned char* data, size_t size, graphics::Image& image, std::string* error);
 
+// Encodes one layer with one cel per frame, all frames the same size and the same duration.
+bool EncodeAsepriteAnimation(const std::vector<graphics::Image>& frames, int frameDurationMs, std::vector<unsigned char>& bytes,
+                             std::string* error);
+
 // Encodes a single-frame, single-layer RGBA Aseprite file.
 bool EncodeAseprite(const graphics::Image& image, std::vector<unsigned char>& bytes, std::string* error);
 

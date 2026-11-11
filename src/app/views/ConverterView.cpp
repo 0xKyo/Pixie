@@ -12,6 +12,7 @@
 #include "app/util/Dialogs.h"
 #include "app/util/Gui.h"
 #include "app/util/Platform.h"
+#include "app/util/Text.h"
 #include "app/util/Texture.h"
 #include "core/formats/ImageFile.h"
 #include "core/graphics/PaletteRemap.h"
@@ -72,6 +73,7 @@ void ConverterView::OpenAsset(const library::Asset& asset) {
     if (!LoadSourceImage(path)) return;
     batchPaths_ = {path};
     previewedIndex_ = 0;
+    animationMode_ = false;
     batchBesideOriginals_ = false;
     CopyUtf8(batchBaseName_, asset.name);
 
@@ -92,11 +94,39 @@ void ConverterView::OpenBatch(std::vector<std::filesystem::path> paths, size_t s
     if (paths.empty() || !LoadSourceImage(paths.front())) return;
     batchPaths_ = std::move(paths);
     previewedIndex_ = 0;
+    animationMode_ = false;
     batchBesideOriginals_ = true;
     CopyUtf8(batchBaseName_, StemUtf8(batchPaths_.front()));
     if (skippedWithoutBase > 0) {
         context_.statusMessage += " (" + std::to_string(skippedWithoutBase) + " selected asset(s) without a base were skipped)";
     }
+    context_.screen = app::Screen::Converter;
+}
+
+void ConverterView::ImportAnimationFromDialog() {
+    NFD::UniquePathN chosen;
+    const nfdresult_t result = NFD::PickFolder(chosen, kSourceImagesFolder);
+    if (result == NFD_ERROR) {
+        context_.statusMessage = std::string("File dialog error: ") + NFD::GetError();
+        return;
+    }
+    if (result != NFD_OKAY) return;
+
+    const std::filesystem::path folder(chosen.get());
+    std::vector<std::filesystem::path> frames = services::ListAnimationFrames(folder);
+    if (frames.empty()) {
+        context_.statusMessage = "No PNG or JPEG images in " + folder.filename().string();
+        return;
+    }
+    if (!LoadSourceImage(frames.front())) return;
+
+    batchPaths_ = std::move(frames);
+    previewedIndex_ = 0;
+    animationMode_ = true;
+    batchBesideOriginals_ = false;
+    animationName_ = StemUtf8(folder.filename().empty() ? folder.parent_path().filename() : folder.filename());
+    if (animationName_.empty()) animationName_ = "animation";
+    context_.statusMessage = "Imported " + std::to_string(batchPaths_.size()) + " frames from " + folder.filename().string();
     context_.screen = app::Screen::Converter;
 }
 
@@ -109,6 +139,16 @@ void ConverterView::Update() {
 }
 
 void ConverterView::FinishConversion() {
+    if (convertingAnimation_) {
+        convertingAnimation_ = false;
+        if (batchProgress_.failed > 0) {
+            context_.statusMessage = "Animation failed: " + batchProgress_.firstError;
+        } else {
+            context_.statusMessage = "Saved animation of " + std::to_string(batchProgress_.saved) + " frames: " +
+                                     animationOutputPath_.filename().string();
+        }
+        return;
+    }
     if (convertingBatch_) {
         convertingBatch_ = false;
         const std::string destination = batchBesideOriginals_ ? std::string("their original folders") : batchOutputFolder_.string();
@@ -232,6 +272,7 @@ void ConverterView::OpenImagesFromDialog() {
     if (paths.empty() || !LoadSourceImage(paths.front())) return;
     batchPaths_ = std::move(paths);
     previewedIndex_ = 0;
+    animationMode_ = false;
     batchBesideOriginals_ = false;
     CopyUtf8(batchBaseName_, StemUtf8(batchPaths_.front()));
     if (batchPaths_.size() > 1) {
@@ -318,6 +359,24 @@ void ConverterView::ConvertPreviewedImage() {
     });
 }
 
+services::BatchJob ConverterView::BuildBatchJob() const {
+    services::BatchJob job;
+    job.sources = batchPaths_;
+    job.settings = CurrentSettings();
+    if (tools_.usePalette && !palette_.Empty()) job.palette = palette_;
+    job.cropToTargetAspect = IsSamplingBoxActive();
+    job.previewCrop = samplingBox_;
+    job.previewWidth = source_.Width();
+    job.previewHeight = source_.Height();
+    job.previewIndex = previewedIndex_;
+    if (tools_.removeBackground && backgroundMask_.MatchesSize(source_.Width(), source_.Height())) {
+        job.previewMask = backgroundMask_; // keeps the user's manual include/exclude clicks
+    }
+    job.removeBackground = tools_.removeBackground;
+    job.backgroundTolerance = tools_.backgroundTolerance;
+    return job;
+}
+
 void ConverterView::ConvertAllImages() {
     if (batchPaths_.empty() || converting_) return;
 
@@ -345,20 +404,7 @@ void ConverterView::ConvertAllImages() {
         outputFolder = std::filesystem::path(chosen.get());
     }
 
-    services::BatchJob job;
-    job.sources = batchPaths_;
-    job.settings = CurrentSettings();
-    if (tools_.usePalette && !palette_.Empty()) job.palette = palette_;
-    job.cropToTargetAspect = IsSamplingBoxActive();
-    job.previewCrop = samplingBox_;
-    job.previewWidth = source_.Width();
-    job.previewHeight = source_.Height();
-    job.previewIndex = previewedIndex_;
-    if (tools_.removeBackground && backgroundMask_.MatchesSize(source_.Width(), source_.Height())) {
-        job.previewMask = backgroundMask_; // keeps the user's manual include/exclude clicks
-    }
-    job.removeBackground = tools_.removeBackground;
-    job.backgroundTolerance = tools_.backgroundTolerance;
+    services::BatchJob job = BuildBatchJob();
     job.naming = besideOriginals ? services::OutputNaming::BesideOriginal
                  : batchKeepNames_ ? services::OutputNaming::KeepName
                                    : services::OutputNaming::Numbered;
@@ -373,6 +419,34 @@ void ConverterView::ConvertAllImages() {
     batchProgress_.Reset();
     context_.statusMessage = "Converting...";
     worker_ = std::async(std::launch::async, [this, job = std::move(job)]() { services::RunBatch(job, batchProgress_); });
+}
+
+void ConverterView::ConvertAnimation() {
+    if (batchPaths_.empty() || converting_) return;
+
+    const nfdnfilteritem_t filters[] = {{PIXIE_NSTR("Aseprite"), PIXIE_NSTR("aseprite")}};
+    const util::NativeString suggestedName = (util::Utf8Path(animationName_) += ".aseprite").native();
+    NFD::UniquePathN chosen;
+    const nfdresult_t result = NFD::SaveDialog(chosen, filters, 1, kConvertedImagesFolder, suggestedName.c_str());
+    if (result == NFD_ERROR) {
+        context_.statusMessage = std::string("File dialog error: ") + NFD::GetError();
+        return;
+    }
+    if (result != NFD_OKAY) return;
+
+    services::AnimationJob job;
+    job.conversion = BuildBatchJob();
+    job.frameDurationMs = animationFrameDurationMs_;
+    job.outputPath = std::filesystem::path(chosen.get());
+    if (job.outputPath.extension().empty()) job.outputPath += ".aseprite";
+
+    converting_ = true;
+    convertingAnimation_ = true;
+    batchTotal_ = static_cast<int>(batchPaths_.size());
+    animationOutputPath_ = job.outputPath;
+    batchProgress_.Reset();
+    context_.statusMessage = "Converting...";
+    worker_ = std::async(std::launch::async, [this, job = std::move(job)]() { services::RunAnimationImport(job, batchProgress_); });
 }
 
 // ---- Layout ----
@@ -426,21 +500,34 @@ void ConverterView::RenderToolbar() {
     ImGui::EndDisabled();
 
     ImGui::SameLine();
-    ImGui::BeginDisabled(batchPaths_.size() < 2 || converting_);
-    const std::string imageCount = std::to_string(batchPaths_.size());
-    const std::string convertAllLabel = batchBesideOriginals_ ? "Convert All (" + imageCount + ") Beside Originals"
-                                                              : "Convert All (" + imageCount + ") To Folder...";
-    if (ImGui::Button(convertAllLabel.c_str())) ConvertAllImages();
+    ImGui::BeginDisabled(converting_);
+    if (ImGui::Button("Import Animation...")) ImportAnimationFromDialog();
     ImGui::EndDisabled();
 
-    ImGui::SameLine();
-    ImGui::BeginDisabled(converting_);
-    ImGui::Checkbox("Convert To Aseprite", &saveAsAseprite_);
-    ImGui::EndDisabled();
+    if (animationMode_) {
+        ImGui::SameLine();
+        ImGui::BeginDisabled(converting_);
+        const std::string animationLabel = "Convert Animation (" + std::to_string(batchPaths_.size()) + " frames)...";
+        if (ImGui::Button(animationLabel.c_str())) ConvertAnimation();
+        ImGui::EndDisabled();
+    } else {
+        ImGui::SameLine();
+        ImGui::BeginDisabled(batchPaths_.size() < 2 || converting_);
+        const std::string imageCount = std::to_string(batchPaths_.size());
+        const std::string convertAllLabel = batchBesideOriginals_ ? "Convert All (" + imageCount + ") Beside Originals"
+                                                                  : "Convert All (" + imageCount + ") To Folder...";
+        if (ImGui::Button(convertAllLabel.c_str())) ConvertAllImages();
+        ImGui::EndDisabled();
+
+        ImGui::SameLine();
+        ImGui::BeginDisabled(converting_);
+        ImGui::Checkbox("Convert To Aseprite", &saveAsAseprite_);
+        ImGui::EndDisabled();
+    }
 
     if (converting_) {
         ImGui::SameLine();
-        if (convertingBatch_) {
+        if (convertingBatch_ || convertingAnimation_) {
             ImGui::Text("Converting %d/%d...", batchProgress_.processed.load(), batchTotal_);
         } else {
             ImGui::TextUnformatted("Converting...");
@@ -452,7 +539,7 @@ void ConverterView::RenderSidebar() {
     constexpr float kSidebarWidth = 240.0f;
     ImGui::BeginChild("Sidebar", ImVec2(kSidebarWidth, 0.0f), ImGuiChildFlags_Borders);
     RenderPalettePanel();
-    if (batchPaths_.size() > 1) RenderBatchPanel();
+    if (batchPaths_.size() > 1 || animationMode_) RenderBatchPanel();
     RenderToolsPanel();
     ImGui::EndChild();
 }
@@ -492,7 +579,7 @@ void ConverterView::RenderPalettePanel() {
 
 void ConverterView::RenderBatchPanel() {
     ImGui::Separator();
-    ImGui::Text("Images (%zu)", batchPaths_.size());
+    ImGui::Text("%s (%zu)", animationMode_ ? "Frames" : "Images", batchPaths_.size());
     ImGui::BeginChild("BatchImages", ImVec2(0.0f, 120.0f), ImGuiChildFlags_Borders);
     ImGui::BeginDisabled(converting_);
     for (size_t i = 0; i < batchPaths_.size(); ++i) {
@@ -502,6 +589,11 @@ void ConverterView::RenderBatchPanel() {
     }
     ImGui::EndDisabled();
     ImGui::EndChild();
+
+    if (animationMode_) {
+        RenderAnimationOptions();
+        return;
+    }
 
     ImGui::BeginDisabled(converting_);
     ImGui::Checkbox("Save beside originals (.aseprite)", &batchBesideOriginals_);
@@ -524,6 +616,16 @@ void ConverterView::RenderBatchPanel() {
         ImGui::TextDisabled("Output: %s_01, %s_02, ...", shownName, shownName);
     }
     ImGui::TextDisabled("Tool settings apply to all images");
+}
+
+void ConverterView::RenderAnimationOptions() {
+    ImGui::BeginDisabled(converting_);
+    ImGui::SetNextItemWidth(100.0f);
+    ImGui::InputInt("Frame ms", &animationFrameDurationMs_, 10, 100);
+    animationFrameDurationMs_ = std::clamp(animationFrameDurationMs_, 1, 65535);
+    ImGui::EndDisabled();
+    ImGui::TextDisabled("Output: one .aseprite, one frame per image");
+    ImGui::TextDisabled("Tool settings apply to all frames");
 }
 
 void ConverterView::RenderToolsPanel() {

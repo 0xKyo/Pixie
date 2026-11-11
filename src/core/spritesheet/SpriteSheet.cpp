@@ -1,6 +1,7 @@
 #include "core/spritesheet/SpriteSheet.h"
 
 #include <algorithm>
+#include <cmath>
 
 #include "core/formats/Aseprite.h"
 #include "core/formats/BinaryFile.h"
@@ -48,12 +49,8 @@ std::vector<std::string> TagsForFrame(const formats::AsepriteAnimation& animatio
     return tags;
 }
 
-// Left-to-right rows ("shelves"); returns the atlas size.
-std::pair<int, int> PackIntoRows(std::vector<PlacedFrame>& frames, const Options& options) {
-    int widestFrame = 0;
-    for (const PlacedFrame& frame : frames) widestFrame = std::max(widestFrame, frame.width);
-    const int rowLimit = std::max(options.maxWidth, widestFrame);
-
+// Left-to-right rows ("shelves") that wrap at `rowLimit`; returns the atlas size.
+std::pair<int, int> PackIntoRows(std::vector<PlacedFrame>& frames, int rowLimit, const Options& options) {
     int cursorX = 0, cursorY = 0, rowHeight = 0, atlasWidth = 0;
     for (PlacedFrame& frame : frames) {
         if (cursorX > 0 && cursorX + frame.width > rowLimit) {
@@ -68,6 +65,36 @@ std::pair<int, int> PackIntoRows(std::vector<PlacedFrame>& frames, const Options
         atlasWidth = std::max(atlasWidth, frame.x + frame.width);
     }
     return {atlasWidth, cursorY + rowHeight};
+}
+
+// Tries several row widths around the square root of the total area and keeps the squarest, then the smallest, atlas.
+std::pair<int, int> PackAsSquareAsPossible(std::vector<PlacedFrame>& frames, const Options& options) {
+    int widestFrame = 0;
+    double totalArea = 0.0;
+    for (const PlacedFrame& frame : frames) {
+        widestFrame = std::max(widestFrame, frame.width);
+        totalArea += static_cast<double>(frame.width + options.padding) * (frame.height + options.padding);
+    }
+    if (options.maxWidth > 0) return PackIntoRows(frames, std::max(options.maxWidth, widestFrame), options);
+
+    const double idealWidth = std::sqrt(totalArea);
+    std::pair<int, int> bestSize{0, 0};
+    int bestLimit = widestFrame;
+    bool haveBest = false;
+    for (int step = 0; step <= 40; ++step) {
+        const int rowLimit = std::max(widestFrame, static_cast<int>(idealWidth * (0.6 + step * 0.04)));
+        const std::pair<int, int> size = PackIntoRows(frames, rowLimit, options);
+        const int longestSide = std::max(size.first, size.second);
+        const int bestLongestSide = std::max(bestSize.first, bestSize.second);
+        const bool better = !haveBest || longestSide < bestLongestSide ||
+                            (longestSide == bestLongestSide && size.first * size.second < bestSize.first * bestSize.second);
+        if (better) {
+            bestSize = size;
+            bestLimit = rowLimit;
+            haveBest = true;
+        }
+    }
+    return PackIntoRows(frames, bestLimit, options); // re-pack so the frames carry the winning positions
 }
 
 std::string WriteLayoutJson(const std::vector<PlacedFrame>& frames, int atlasWidth, int atlasHeight) {
@@ -124,7 +151,7 @@ bool Build(const std::vector<Source>& sources, const Options& options, Result& r
     }
     if (frames.empty()) return fail("Nothing to pack");
 
-    const auto [atlasWidth, atlasHeight] = PackIntoRows(frames, options);
+    const auto [atlasWidth, atlasHeight] = PackAsSquareAsPossible(frames, options);
     result.atlas.Resize(atlasWidth, atlasHeight, color::kTransparent);
     for (const PlacedFrame& frame : frames) {
         for (int y = 0; y < frame.height; ++y) {

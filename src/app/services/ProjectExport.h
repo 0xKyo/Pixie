@@ -9,7 +9,7 @@
 
 namespace pixie::services {
 
-// Asks for a folder, writes the art as <name>_atlas.png + <name>_layout.json and copies the audio into SFX/; returns a status line.
+// Asks for a folder, writes the art as atlas.png + atlas.json and copies the audio into SFX/; returns a status line.
 std::string ExportProject(const Project& project, const std::vector<library::Asset>& assets,
                           const std::filesystem::path& libraryRoot);
 

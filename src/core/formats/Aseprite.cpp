@@ -372,19 +372,9 @@ bool DecodeAsepriteFirstFrame(const unsigned char* data, size_t size, graphics::
     return true;
 }
 
-bool EncodeAseprite(const graphics::Image& image, std::vector<unsigned char>& bytes, std::string* error) {
-    if (image.Empty()) {
-        if (error) *error = "Cannot save an empty image";
-        return false;
-    }
-    if (image.Width() > 0xFFFF || image.Height() > 0xFFFF) {
-        if (error) *error = "Image too large for the Aseprite format";
-        return false;
-    }
-    const auto width = static_cast<unsigned>(image.Width());
-    const auto height = static_cast<unsigned>(image.Height());
+namespace {
 
-    // Layer chunk: one visible, editable, normal-blend layer.
+std::vector<unsigned char> BuildLayerChunk() {
     std::vector<unsigned char> layer;
     PutWord(layer, 3);   // flags: visible | editable
     PutWord(layer, 0);   // layer type: image
@@ -397,8 +387,13 @@ bool EncodeAseprite(const graphics::Image& image, std::vector<unsigned char>& by
     const std::string layerName = "Layer 1";
     PutWord(layer, static_cast<unsigned>(layerName.size()));
     layer.insert(layer.end(), layerName.begin(), layerName.end());
+    return layer;
+}
 
-    // Cel chunk: the whole image, uncompressed, at (0, 0).
+// The whole image, uncompressed, at (0, 0) on layer 0.
+std::vector<unsigned char> BuildCelChunk(const graphics::Image& image) {
+    const auto width = static_cast<unsigned>(image.Width());
+    const auto height = static_cast<unsigned>(image.Height());
     std::vector<unsigned char> cel;
     PutWord(cel, 0);   // layer index
     PutWord(cel, 0);   // x
@@ -411,32 +406,75 @@ bool EncodeAseprite(const graphics::Image& image, std::vector<unsigned char>& by
     PutWord(cel, height);
     const auto* pixelBytes = reinterpret_cast<const unsigned char*>(image.Pixels());
     cel.insert(cel.end(), pixelBytes, pixelBytes + static_cast<size_t>(width) * height * 4);
+    return cel;
+}
 
+// The layer chunk is only written in the first frame.
+std::vector<unsigned char> BuildFrame(const graphics::Image& image, bool includeLayer, int durationMs) {
+    const uint32_t chunkCount = includeLayer ? 2 : 1;
     std::vector<unsigned char> frame;
     PutDword(frame, 0); // frame size, patched below
     PutWord(frame, kFrameMagic);
-    PutWord(frame, 2);   // old chunk count
-    PutWord(frame, 100); // duration in ms
+    PutWord(frame, chunkCount); // old chunk count
+    PutWord(frame, static_cast<unsigned>(durationMs));
     PutZeros(frame, 2);
-    PutDword(frame, 2);  // new chunk count
-    PutDword(frame, static_cast<uint32_t>(layer.size() + 6));
-    PutWord(frame, kLayerChunk);
-    frame.insert(frame.end(), layer.begin(), layer.end());
+    PutDword(frame, chunkCount); // new chunk count
+    if (includeLayer) {
+        const std::vector<unsigned char> layer = BuildLayerChunk();
+        PutDword(frame, static_cast<uint32_t>(layer.size() + 6));
+        PutWord(frame, kLayerChunk);
+        frame.insert(frame.end(), layer.begin(), layer.end());
+    }
+    const std::vector<unsigned char> cel = BuildCelChunk(image);
     PutDword(frame, static_cast<uint32_t>(cel.size() + 6));
     PutWord(frame, kCelChunk);
     frame.insert(frame.end(), cel.begin(), cel.end());
     const auto frameSize = static_cast<uint32_t>(frame.size());
     for (int i = 0; i < 4; ++i) frame[i] = static_cast<unsigned char>((frameSize >> (8 * i)) & 0xFF);
+    return frame;
+}
+
+} // namespace
+
+bool EncodeAsepriteAnimation(const std::vector<graphics::Image>& frames, int frameDurationMs, std::vector<unsigned char>& bytes,
+                             std::string* error) {
+    if (frames.empty() || frames.front().Empty()) {
+        if (error) *error = "Cannot save an empty image";
+        return false;
+    }
+    const int imageWidth = frames.front().Width();
+    const int imageHeight = frames.front().Height();
+    if (imageWidth > 0xFFFF || imageHeight > 0xFFFF) {
+        if (error) *error = "Image too large for the Aseprite format";
+        return false;
+    }
+    if (frames.size() > 0xFFFF) {
+        if (error) *error = "Too many frames for the Aseprite format";
+        return false;
+    }
+    for (size_t index = 1; index < frames.size(); ++index) {
+        if (frames[index].Width() != imageWidth || frames[index].Height() != imageHeight) {
+            if (error) *error = "Frame " + std::to_string(index + 1) + " is not the same size as the first frame";
+            return false;
+        }
+    }
+    const int durationMs = std::clamp(frameDurationMs, 1, 0xFFFF);
+
+    std::vector<unsigned char> frameBytes;
+    for (size_t index = 0; index < frames.size(); ++index) {
+        const std::vector<unsigned char> frame = BuildFrame(frames[index], index == 0, durationMs);
+        frameBytes.insert(frameBytes.end(), frame.begin(), frame.end());
+    }
 
     bytes.clear();
-    PutDword(bytes, static_cast<uint32_t>(kHeaderSize + frame.size()));
+    PutDword(bytes, static_cast<uint32_t>(kHeaderSize + frameBytes.size()));
     PutWord(bytes, kFileMagic);
-    PutWord(bytes, 1);  // frame count
-    PutWord(bytes, width);
-    PutWord(bytes, height);
+    PutWord(bytes, static_cast<unsigned>(frames.size()));
+    PutWord(bytes, static_cast<unsigned>(imageWidth));
+    PutWord(bytes, static_cast<unsigned>(imageHeight));
     PutWord(bytes, 32); // color depth: RGBA
     PutDword(bytes, 1); // flags: layer opacity is valid
-    PutWord(bytes, 100);
+    PutWord(bytes, static_cast<unsigned>(durationMs));
     PutZeros(bytes, 8);
     PutByte(bytes, 0);  // transparent palette index
     PutZeros(bytes, 3);
@@ -445,8 +483,12 @@ bool EncodeAseprite(const graphics::Image& image, std::vector<unsigned char>& by
     PutByte(bytes, 1);  // pixel height
     PutZeros(bytes, 8); // grid x, y, width, height
     PutZeros(bytes, 84);
-    bytes.insert(bytes.end(), frame.begin(), frame.end());
+    bytes.insert(bytes.end(), frameBytes.begin(), frameBytes.end());
     return true;
+}
+
+bool EncodeAseprite(const graphics::Image& image, std::vector<unsigned char>& bytes, std::string* error) {
+    return EncodeAsepriteAnimation({image}, 100, bytes, error);
 }
 
 } // namespace pixie::formats

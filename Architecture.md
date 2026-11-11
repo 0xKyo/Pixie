@@ -40,7 +40,7 @@ Dependency rules:
 |---|---|---|
 | `color/` | `pixie::color` | `Rgba` (8-bit RGBA), `Lab`, `ToLab`, `Ciede2000`; `Palette` (GIMP `.gpl`) |
 | `graphics/` | `pixie::graphics` | `Image` (pixel buffer, no IO); `Mask` + `DetectBackground`/`ToggleRegion`/`ApplyMask`; `CropRect`, `CropImage`, `CenteredRectWithAspect`; `ResizeNearest`, `MakeThumbnail`; `RemapToPalette`, `BinarizeAlpha`, `RemoveTransparency` |
-| `formats/` | `pixie::formats` | `LoadImageFile`, `SavePng`, `SaveAseprite` (stb_image); Aseprite reader (all frames, layers, tags, linked/compressed cels) and writer; `ReadWholeFile`/`WriteWholeFile` |
+| `formats/` | `pixie::formats` | `LoadImageFile`, `SavePng`, `SaveAseprite`, `SaveAsepriteAnimation` (stb_image); Aseprite reader (all frames, layers, tags, linked/compressed cels) and writer (one layer, N equal-size frames); `ReadWholeFile`/`WriteWholeFile` |
 | `audio/` | `pixie::audio` | `AudioClip`, `LoadClip` (WAV/MP3/FLAC via miniaudio, Ogg via stb_vorbis), `ComputeWaveform`; `SilenceTrim`, `LoopMaker`, `WavWrite` (`FindSoundRange`, `TrimWavFile`) |
 | `library/` | `pixie::library` | `Asset`, `AssetKind`, `ScanFolder`; `VariationGroupKey`, `BuildGridTiles` |
 | `spritesheet/` | `pixie::spritesheet` | `Build`: packs Aseprite frames into an atlas + layout JSON |
@@ -51,7 +51,7 @@ Dependency rules:
 |---|---|---|
 | `app/` | `pixie::app` | `Application` (window, ImGui, main loop, screen switch); `AppContext` (shared state); `Screen` enum |
 | `views/` | `pixie::views` | `LibraryView` (folder picker, grid, filters, projects bar); `PreviewPanel` (side panel); `ConverterView` (conversion screen); `SamplingBoxEditor` (Downsize box drag/resize) |
-| `services/` | `pixie::services` | `Settings`, `ProjectStore`, `ThumbnailCache`, `AudioPlayer` (can be limited to a frame range and looped), `ExternalTools` (Aseprite/Audacity), `ProjectExport`, `ConversionPipeline` (`ConvertImage`), `BatchConversion` (`RunBatch`) |
+| `services/` | `pixie::services` | `Settings`, `ProjectStore`, `ThumbnailCache`, `AudioPlayer` (can be limited to a frame range and looped), `ExternalTools` (Aseprite/Audacity), `ProjectExport`, `ConversionPipeline` (`ConvertImage`), `BatchConversion` (`RunBatch`, `ConvertBatchSource`), `AnimationImport` (`ListAnimationFrames`, `RunAnimationImport`) |
 | `util/` | `pixie::util` | `Text` (formatting, UTF-8 paths), `Dialogs` (overwrite prompt), `Texture` (SDL upload), `Gui` (fullscreen window, fit helpers), `Platform.h` (`PIXIE_NSTR`, `NativeString`) |
 
 ## Object graph
@@ -104,6 +104,14 @@ Application
 - **Batch conversion**: `ConverterView::ConvertAllImages` fills a `services::BatchJob`
   and runs `RunBatch` on a worker. Progress goes through `BatchProgress`, whose
   `processed` counter is atomic.
+- **Import Animation**: the "Import Animation..." button (library toolbar and converter toolbar) calls
+  `ConverterView::ImportAnimationFromDialog`: pick a folder, `services::ListAnimationFrames` returns its
+  PNG/JPEG files in natural name order (frame2 before frame10) and the converter enters `animationMode_`.
+  The sidebar lists the frames and asks for the frame duration; palette, remove transparency/background and
+  Downsize apply to every frame. "Convert Animation" asks for the output file, builds a `BatchJob` through
+  `BuildBatchJob` and runs `RunAnimationImport` on the worker, which converts each frame with
+  `ConvertBatchSource` and writes one `.aseprite` with `SaveAsepriteAnimation`. All frames must end up the
+  same size, otherwise nothing is written. Opening images or an asset leaves animation mode.
 - **Make Loopable**: the panel swaps `clip_` for `audio::MakeLoopable(original, crossfade)`
   (the tail is blended into the head with an equal-power crossfade, so the clip gets shorter),
   plays it looped as a preview, and Apply writes it over the WAV via a temp file + rename.
@@ -112,7 +120,7 @@ Application
   renames its key in every project to the WAV's key.
 - **Project export**: `services::ExportProject` asks for a folder. The active project's
   `.aseprite` files go through `spritesheet::Build` and are written as
-  `<name>_atlas.png` plus `<name>_layout.json` (read by the Godot importer); its audio
+  `atlas.png` plus `atlas.json` (read by the Godot importer); its audio
   files are copied into `<folder>/SFX/`.
 
 ## Threading

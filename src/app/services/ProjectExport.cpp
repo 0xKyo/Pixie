@@ -1,4 +1,4 @@
-#include "app/services/ProjectExport.h"
+﻿#include "app/services/ProjectExport.h"
 
 #include <nfd.hpp>
 
@@ -6,7 +6,6 @@
 #include <system_error>
 
 #include "app/util/Platform.h"
-#include "app/util/Text.h"
 #include "core/formats/BinaryFile.h"
 #include "core/formats/ImageFile.h"
 #include "core/spritesheet/SpriteSheet.h"
@@ -26,13 +25,10 @@ std::filesystem::path AskForFolder(const std::filesystem::path& startFolder, std
     return std::filesystem::path(chosen.get());
 }
 
-// Writes <project>_atlas.png + <project>_layout.json; returns a status fragment, or an error starting with "failed".
-std::string ExportArt(const std::vector<spritesheet::Source>& sources, const std::string& projectName,
-                      const std::filesystem::path& folder) {
-    const std::filesystem::path atlasPath = folder / (util::Utf8Path(projectName) += "_atlas.png");
-    std::filesystem::path layoutPath = atlasPath;
-    layoutPath.replace_extension();
-    layoutPath += "_layout.json";
+// Writes atlas.png + atlas.json; returns a status fragment, or an error starting with "spritesheet failed".
+std::string ExportArt(const std::vector<spritesheet::Source>& sources, const std::filesystem::path& folder) {
+    const std::filesystem::path atlasPath = folder / "atlas.png";
+    const std::filesystem::path layoutPath = folder / "atlas.json";
 
     spritesheet::Result sheet;
     std::string error;
@@ -103,7 +99,7 @@ std::string ExportProject(const Project& project, const std::vector<library::Ass
     if (folder.empty()) return dialogError;
 
     std::vector<std::string> parts;
-    if (!sources.empty()) parts.push_back(ExportArt(sources, project.name, folder));
+    if (!sources.empty()) parts.push_back(ExportArt(sources, folder));
     if (!audioFiles.empty()) {
         std::string failures;
         const size_t copied = ExportAudio(audioFiles, folder, failures);

@@ -49,6 +49,9 @@ struct BatchProgress {
     void Reset();
 };
 
+// Runs the job's pipeline on one already-loaded source (its crop, background mask, palette and resize).
+graphics::Image ConvertBatchSource(const BatchJob& job, size_t sourceIndex, const graphics::Image& source);
+
 // Converts and saves every source in order (meant to run on a background thread).
 void RunBatch(const BatchJob& job, BatchProgress& progress);
 

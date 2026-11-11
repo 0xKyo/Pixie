@@ -145,6 +145,8 @@ void LibraryView::RenderToolbar() {
     }
     ImGui::SameLine();
     if (ImGui::Button("Converter")) context_.screen = app::Screen::Converter;
+    ImGui::SameLine();
+    if (ImGui::Button("Import Animation...")) converter_.ImportAnimationFromDialog();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open the converter without a specific asset");
     ImGui::SameLine();
     ImGui::TextDisabled("%s", context_.settings.libraryRoot.string().c_str());
