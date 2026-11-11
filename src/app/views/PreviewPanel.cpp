@@ -11,6 +11,7 @@
 #include "app/util/Text.h"
 #include "app/util/Texture.h"
 #include "core/audio/LoopMaker.h"
+#include "core/audio/OggWrite.h"
 #include "core/audio/SilenceTrim.h"
 #include "core/audio/WavWrite.h"
 #include "core/formats/BinaryFile.h"
@@ -440,7 +441,7 @@ void PreviewPanel::BeginTrim() {
         return;
     }
     if (!audio::CanTrim(asset_.audioPath)) {
-        message_ = "Only WAV files can be trimmed";
+        message_ = "Only WAV and OGG files can be trimmed";
         return;
     }
     audio::FrameRange sound;
@@ -469,7 +470,7 @@ void PreviewPanel::RenderTrimControls() {
         ImGui::BeginDisabled(!canTrim);
         if (ImGui::Button("Trim Silence")) BeginTrim();
         ImGui::EndDisabled();
-        if (!canTrim && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Only WAV files can be trimmed");
+        if (!canTrim && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Only WAV and OGG files can be trimmed");
         return;
     }
 
@@ -498,10 +499,12 @@ void PreviewPanel::ApplyTrim() {
     const std::string name = asset_.audioPath.filename().string();
     const double rate = clip_.sampleRate;
     const std::string summary = util::FormatDuration(clip_.DurationSeconds()) + " -> " + util::FormatDuration(static_cast<double>(trimEnd_ - trimStart_) / rate);
-    if (!util::Confirm(context_.window, "Trim " + name + "?\n\n" + summary + "\n\nThe file will be overwritten.", "Trim")) return;
+    const std::string overwriteNote = asset_.audioFormat == "OGG" ? "The file will be overwritten (re-encoded as Ogg Vorbis, a second lossy pass)."
+                                                                  : "The file will be overwritten.";
+    if (!util::Confirm(context_.window, "Trim " + name + "?\n\n" + summary + "\n\n" + overwriteNote, "Trim")) return;
 
     std::string error;
-    if (!audio::TrimWavFile(asset_.audioPath, audio::FrameRange{trimStart_, trimEnd_}, &error)) {
+    if (!audio::TrimAudioFile(asset_.audioPath, audio::FrameRange{trimStart_, trimEnd_}, &error)) {
         message_ = "Trim failed: " + error;
         return;
     }
@@ -516,7 +519,7 @@ void PreviewPanel::ApplyTrim() {
 // Starts loop mode: the clip is replaced by a crossfaded copy that plays in a loop, so you can hear the seam.
 void PreviewPanel::BeginLoopMaker() {
     if (clip_.Empty() || !audio::CanTrim(asset_.audioPath)) {
-        message_ = "Only WAV files can be made loopable";
+        message_ = "Only WAV and OGG files can be made loopable";
         return;
     }
     originalClip_ = clip_;
@@ -551,7 +554,7 @@ void PreviewPanel::RenderLoopControls() {
         ImGui::BeginDisabled(!canLoop);
         if (ImGui::Button("Make Loopable")) BeginLoopMaker();
         ImGui::EndDisabled();
-        if (!canLoop && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Only WAV files can be made loopable");
+        if (!canLoop && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Only WAV and OGG files can be made loopable");
         return;
     }
 
@@ -570,17 +573,22 @@ void PreviewPanel::RenderLoopControls() {
     if (ImGui::Button("Cancel##loop")) EndLoopMaker();
 }
 
-// Overwrites the WAV with the crossfaded clip (16-bit PCM), after asking.
+// Overwrites the file with the crossfaded clip (16-bit WAV, or re-encoded Ogg Vorbis), after asking.
 void PreviewPanel::ApplyLoop() {
     const std::string name = asset_.audioPath.filename().string();
+    const bool isOgg = asset_.audioFormat == "OGG";
     const std::string summary = util::FormatDuration(originalClip_.DurationSeconds()) + " -> " + util::FormatDuration(clip_.DurationSeconds());
-    if (!util::Confirm(context_.window, "Make " + name + " loopable?\n\n" + summary + "\n\nThe file will be overwritten (saved as 16-bit WAV).", "Apply")) return;
+    const std::string overwriteNote = isOgg ? "The file will be overwritten (re-encoded as Ogg Vorbis, a second lossy pass)."
+                                            : "The file will be overwritten (saved as 16-bit WAV).";
+    if (!util::Confirm(context_.window, "Make " + name + " loopable?\n\n" + summary + "\n\n" + overwriteNote, "Apply")) return;
 
     std::filesystem::path temporary = asset_.audioPath;
     temporary += ".looping";
     std::string error;
     std::error_code renameError;
-    if (!audio::SaveWav(clip_, temporary, &error)) {
+    const bool saved = isOgg ? audio::SaveOgg(clip_, temporary, audio::kMusicOggQuality, &error) : audio::SaveWav(clip_, temporary, &error);
+    if (!saved) {
+        std::filesystem::remove(temporary, renameError);
         message_ = "Make Loopable failed: " + error;
         return;
     }

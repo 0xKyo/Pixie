@@ -26,7 +26,7 @@ struct AudioImportResult {
     [[nodiscard]] size_t TouchedCount() const { return musicToOgg + sfxToWav + rewritten; }
 };
 
-// SFX: 16-bit stereo 44.1 kHz with the peak at kSfxPeakDb.
+// SFX: 16-bit stereo 48 kHz with the peak at kSfxPeakDb.
 audio::AudioClip ToSfxClip(const audio::AudioClip& clip) {
     audio::AudioClip result = audio::ConvertToStandardFormat(clip);
     audio::NormalizePeak(result, audio::kSfxPeakDb);
@@ -56,8 +56,8 @@ bool ReplaceFileInPlace(const std::filesystem::path& path, Writer write, std::st
     return true;
 }
 
-// Brings every audio file to its category's format. Music is stereo 44.1 kHz Ogg Vorbis (quality 0.5); SFX is 16-bit
-// stereo 44.1 kHz WAV with a normalized peak. Files in another format are written beside the original, which is then
+// Brings every audio file to its category's format. Music is stereo 48 kHz Ogg Vorbis (quality 0.5); SFX is 16-bit
+// stereo 48 kHz WAV with a normalized peak. Files in another format are written beside the original, which is then
 // deleted; .wav/.ogg files that only need fixing are rewritten in place.
 AudioImportResult ImportAudio(const std::vector<library::Asset>& assets) {
     AudioImportResult result;
@@ -137,7 +137,7 @@ size_t AppContext::RescanLibrary() {
             }
         }
         statusMessage = "Audio imported: " + std::to_string(imported.musicToOgg) + " music to OGG, " + std::to_string(imported.sfxToWav) +
-                        " SFX to WAV, " + std::to_string(imported.rewritten) + " fixed in place (stereo 44.1 kHz)";
+                        " SFX to WAV, " + std::to_string(imported.rewritten) + " fixed in place (stereo 48 kHz)";
     }
     if (!imported.failures.empty()) statusMessage = "Audio conversion failed: " + imported.failures;
 

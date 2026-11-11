@@ -91,11 +91,12 @@ Application
   conversion and search filters. `library::BuildGridTiles` collapses variation groups,
   and `RenderGrid` draws only the visible rows (ImGui list clipper). Thumbnails decode
   lazily within a per-frame time budget (`ThumbnailCache`).
-- **Trim Silence** (WAV only): right click an audio tile, or press the button in the panel,
+- **Trim Silence** (WAV and OGG): right click an audio tile, or press the button in the panel,
   to enter trim mode in `PreviewPanel`. `audio::FindSoundRange` proposes the cut points, the user
   drags the two handles over the waveform, and `AudioPlayer::SetRange` makes playback cover only the
   kept part. "Apply Trim" asks for confirmation and calls `audio::TrimWavFile`, which copies the kept
-  sample bytes into a new WAV (same format, other chunks preserved) and replaces the original.
+  sample bytes into a new WAV (same format, other chunks preserved) and replaces the original. OGG files go through
+  `audio::TrimOggFile`, which decodes, cuts and re-encodes them (`CanTrim` accepts `.wav` and `.ogg`).
 - **Preview**: clicking a tile calls `PreviewPanel::Open`, which loads the base image,
   every Aseprite frame (animated with the real frame durations), or the audio clip and
   its waveform (`AudioPlayer`).
@@ -116,9 +117,9 @@ Application
   same size, otherwise nothing is written. Opening images or an asset leaves animation mode.
 - **Make Loopable**: the panel swaps `clip_` for `audio::MakeLoopable(original, crossfade)`
   (the tail is blended into the head with an equal-power crossfade, so the clip gets shorter),
-  plays it looped as a preview, and Apply writes it over the WAV via a temp file + rename.
+  plays it looped as a preview, and Apply writes it over the file via a temp file + rename (16-bit WAV, or re-encoded Ogg Vorbis for `.ogg`).
 - **Audio import conversion**: every `AppContext::RescanLibrary` runs `ImportAudio` over the audio assets.
-  Music is kept as stereo 44.1 kHz Ogg Vorbis (quality 0.5); SFX as 16-bit PCM stereo 44.1 kHz `.wav` whose peak
+  Music is kept as stereo 48 kHz Ogg Vorbis (quality 0.5); SFX as 16-bit PCM stereo 48 kHz `.wav` whose peak
   is normalized to -1 dBFS. Files in another format are decoded with `audio::LoadClip`, converted
   (`ConvertToStandardFormat`: stereo + windowed-sinc resample), written beside the original (`SaveOgg` / `SaveWav`) and the
   original is deleted; project keys are renamed to the new file's key. A `.wav`/`.ogg` that already is the right

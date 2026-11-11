@@ -1,5 +1,7 @@
 #include "core/audio/SilenceTrim.h"
 
+#include "core/audio/OggWrite.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -85,7 +87,10 @@ bool FindSoundRange(const AudioClip& clip, const SilenceSettings& settings, Fram
     return true;
 }
 
-bool CanTrim(const std::filesystem::path& path) { return LowercaseExtension(path) == ".wav"; }
+bool CanTrim(const std::filesystem::path& path) {
+    const std::string extension = LowercaseExtension(path);
+    return extension == ".wav" || extension == ".ogg";
+}
 
 bool TrimWavFile(const std::filesystem::path& path, const FrameRange& keep, std::string* error) {
     auto fail = [&](const std::string& message) {
@@ -144,6 +149,40 @@ bool TrimWavFile(const std::filesystem::path& path, const FrameRange& keep, std:
         return fail("Could not replace the original file");
     }
     return true;
+}
+
+bool TrimOggFile(const std::filesystem::path& path, const FrameRange& keep, std::string* error) {
+    AudioClip clip;
+    if (!LoadClip(path, clip, error)) return false;
+    if (keep.endFrame <= keep.firstFrame || keep.endFrame > clip.FrameCount()) {
+        if (error) *error = "the range to keep is invalid";
+        return false;
+    }
+
+    AudioClip trimmed = clip;
+    const auto channels = static_cast<std::ptrdiff_t>(clip.channels);
+    trimmed.samples.assign(clip.samples.begin() + static_cast<std::ptrdiff_t>(keep.firstFrame) * channels,
+                           clip.samples.begin() + static_cast<std::ptrdiff_t>(keep.endFrame) * channels);
+
+    // Write beside the original first so a failed encode never damages it.
+    std::filesystem::path temporary = path;
+    temporary += ".trimming";
+    std::error_code fileError;
+    if (!SaveOgg(trimmed, temporary, kMusicOggQuality, error)) {
+        std::filesystem::remove(temporary, fileError);
+        return false;
+    }
+    std::filesystem::rename(temporary, path, fileError);
+    if (fileError) {
+        if (error) *error = "could not replace the file: " + fileError.message();
+        std::filesystem::remove(temporary, fileError);
+        return false;
+    }
+    return true;
+}
+
+bool TrimAudioFile(const std::filesystem::path& path, const FrameRange& keep, std::string* error) {
+    return LowercaseExtension(path) == ".ogg" ? TrimOggFile(path, keep, error) : TrimWavFile(path, keep, error);
 }
 
 } // namespace pixie::audio
