@@ -7,7 +7,7 @@
 namespace pixie::library {
 
 // Kinds of assets the library shows; to add one, insert it before Count and give it a label.
-enum class AssetKind { Image, Audio, Count };
+enum class AssetKind { Image, Sfx, Music, Count };
 inline constexpr int kAssetKindCount = static_cast<int>(AssetKind::Count);
 
 [[nodiscard]] const char* KindLabel(AssetKind kind);
@@ -26,7 +26,8 @@ struct Asset {
     std::filesystem::path audioPath;     // audio assets only
     std::string audioFormat;             // "WAV", "MP3", ...
 
-    [[nodiscard]] bool IsAudio() const { return kind == AssetKind::Audio; }
+    [[nodiscard]] bool IsAudio() const { return kind == AssetKind::Sfx || kind == AssetKind::Music; }
+    [[nodiscard]] bool IsMusic() const { return kind == AssetKind::Music; }
     [[nodiscard]] bool HasBaseImage() const { return !baseImagePath.empty(); }
     [[nodiscard]] bool HasAseprite() const { return !asepritePath.empty(); }
     // The file that represents the asset: the audio file, else the base image, else the .aseprite.
@@ -44,6 +45,7 @@ struct Asset {
 [[nodiscard]] std::string KeyAfterRename(const Asset& asset, const std::string& newName);
 
 // Recursively finds every image/audio file under `root` and pairs hero.png with hero.aseprite.
+// Audio inside a folder named "Music" (any depth, any letter case) is Music; all other audio is Sfx.
 std::vector<Asset> ScanFolder(const std::filesystem::path& root);
 
 } // namespace pixie::library

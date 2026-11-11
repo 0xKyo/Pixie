@@ -6,6 +6,7 @@
     "sdl3",
     "stb",
     "miniaudio",
+    "libvorbis",
     "nativefiledialog-extended",
     {
       "name": "imgui",

@@ -19,6 +19,7 @@ find_package(SDL3 CONFIG REQUIRED)
 find_package(imgui CONFIG REQUIRED)
 find_package(Stb REQUIRED)
 find_package(nfd CONFIG REQUIRED)
+find_package(Vorbis CONFIG REQUIRED)
 find_path(MINIAUDIO_INCLUDE_DIRS "miniaudio.h" REQUIRED)
 
 # ---------------------------------------------------------------------------
@@ -69,6 +70,12 @@ add_executable(Pixie
   src/core/audio/AudioClip.h
   src/core/audio/LoopMaker.cpp
   src/core/audio/LoopMaker.h
+  src/core/audio/Normalize.cpp
+  src/core/audio/Normalize.h
+  src/core/audio/OggWrite.cpp
+  src/core/audio/OggWrite.h
+  src/core/audio/Resample.cpp
+  src/core/audio/Resample.h
   src/core/audio/SilenceTrim.cpp
   src/core/audio/SilenceTrim.h
   src/core/audio/StbVorbis.cpp
@@ -108,6 +115,7 @@ target_link_libraries(Pixie PRIVATE
   SDL3::SDL3
   imgui::imgui
   nfd::nfd
+  Vorbis::vorbisenc
 )
 
 if(MSVC)

@@ -14,7 +14,8 @@ namespace pixie::services {
 
 namespace {
 
-constexpr const char* kAudioFolderName = "SFX";
+constexpr const char* kSfxFolderName = "SFX";
+constexpr const char* kMusicFolderName = "Music";
 
 // Asks for the destination folder; empty if cancelled, `dialogError` set if the dialog failed.
 std::filesystem::path AskForFolder(const std::filesystem::path& startFolder, std::string& dialogError) {
@@ -42,9 +43,10 @@ std::string ExportArt(const std::vector<spritesheet::Source>& sources, const std
            atlasPath.filename().string() + " + " + layoutPath.filename().string();
 }
 
-// Copies the audio files into <folder>/SFX; returns how many were copied (errors are appended to `failures`).
-size_t ExportAudio(const std::vector<std::filesystem::path>& audioFiles, const std::filesystem::path& folder, std::string& failures) {
-    const std::filesystem::path audioFolder = folder / kAudioFolderName;
+// Copies the audio files into <folder>/<subfolderName>; returns how many were copied (errors are appended to `failures`).
+size_t ExportAudio(const std::vector<std::filesystem::path>& audioFiles, const std::filesystem::path& folder,
+                   const char* subfolderName, std::string& failures) {
+    const std::filesystem::path audioFolder = folder / subfolderName;
     std::error_code ec;
     std::filesystem::create_directories(audioFolder, ec);
     if (ec) {
@@ -75,13 +77,14 @@ size_t ExportAudio(const std::vector<std::filesystem::path>& audioFiles, const s
 std::string ExportProject(const Project& project, const std::vector<library::Asset>& assets, const std::filesystem::path& libraryRoot) {
     // Names must be unique in the layout, so same-named assets from other folders get _2, _3...
     std::vector<spritesheet::Source> sources;
-    std::vector<std::filesystem::path> audioFiles;
+    std::vector<std::filesystem::path> sfxFiles;
+    std::vector<std::filesystem::path> musicFiles;
     std::set<std::string> usedNames;
     size_t notConvertedCount = 0;
     for (const library::Asset& asset : assets) {
         if (!project.assetKeys.count(asset.key)) continue;
         if (asset.IsAudio()) {
-            audioFiles.push_back(asset.audioPath);
+            (asset.IsMusic() ? musicFiles : sfxFiles).push_back(asset.audioPath);
             continue;
         }
         if (!asset.HasAseprite()) {
@@ -92,7 +95,7 @@ std::string ExportProject(const Project& project, const std::vector<library::Ass
         for (int suffix = 2; !usedNames.insert(uniqueName).second; ++suffix) uniqueName = asset.name + "_" + std::to_string(suffix);
         sources.push_back(spritesheet::Source{uniqueName, asset.asepritePath});
     }
-    if (sources.empty() && audioFiles.empty()) return "Nothing to export: the project has no converted (.aseprite) or audio assets";
+    if (sources.empty() && sfxFiles.empty() && musicFiles.empty()) return "Nothing to export: the project has no converted (.aseprite) or audio assets";
 
     std::string dialogError;
     const std::filesystem::path folder = AskForFolder(libraryRoot, dialogError);
@@ -100,10 +103,14 @@ std::string ExportProject(const Project& project, const std::vector<library::Ass
 
     std::vector<std::string> parts;
     if (!sources.empty()) parts.push_back(ExportArt(sources, folder));
-    if (!audioFiles.empty()) {
+    const std::pair<const std::vector<std::filesystem::path>*, const char*> audioGroups[] = {{&sfxFiles, kSfxFolderName},
+                                                                                           {&musicFiles, kMusicFolderName}};
+    for (const auto& [files, subfolderName] : audioGroups) {
+        if (files->empty()) continue;
         std::string failures;
-        const size_t copied = ExportAudio(audioFiles, folder, failures);
-        parts.push_back(std::to_string(copied) + " audio file(s) to " + kAudioFolderName + "/" + (failures.empty() ? "" : " (failed: " + failures + ")"));
+        const size_t copied = ExportAudio(*files, folder, subfolderName, failures);
+        parts.push_back(std::to_string(copied) + " " + subfolderName + " file(s) to " + subfolderName + "/" +
+                        (failures.empty() ? "" : " (failed: " + failures + ")"));
     }
 
     std::string status = "Exported ";

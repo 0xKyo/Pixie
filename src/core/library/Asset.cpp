@@ -27,6 +27,12 @@ std::string ToUpper(std::string text) {
 
 std::string LowercaseExtension(const std::filesystem::path& path) { return ToLower(ToUtf8(path.extension().u8string())); }
 
+// True if any folder in the root-relative path is called "music".
+bool IsInMusicFolder(const std::filesystem::path& relativeFolder) {
+    return std::any_of(relativeFolder.begin(), relativeFolder.end(),
+                       [](const std::filesystem::path& part) { return ToLower(ToUtf8(part.u8string())) == "music"; });
+}
+
 std::string MakeKey(const std::string& folder, const std::string& name, const std::string& audioExtension) {
     return ToLower(folder) + "/" + ToLower(name) + audioExtension;
 }
@@ -36,7 +42,8 @@ std::string MakeKey(const std::string& folder, const std::string& name, const st
 const char* KindLabel(AssetKind kind) {
     switch (kind) {
     case AssetKind::Image: return "Images";
-    case AssetKind::Audio: return "Audio";
+    case AssetKind::Sfx: return "SFX";
+    case AssetKind::Music: return "Music";
     default: return "?";
     }
 }
@@ -103,7 +110,7 @@ std::vector<Asset> ScanFolder(const std::filesystem::path& root) {
         }
 
         if (isAudio) {
-            asset.kind = AssetKind::Audio;
+            asset.kind = IsInMusicFolder(relativeFolder) ? AssetKind::Music : AssetKind::Sfx;
             asset.audioPath = path;
             asset.audioFormat = ToUpper(LowercaseExtension(path).substr(1));
         } else if (isBaseImage) {

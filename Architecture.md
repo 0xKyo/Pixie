@@ -41,8 +41,8 @@ Dependency rules:
 | `color/` | `pixie::color` | `Rgba` (8-bit RGBA), `Lab`, `ToLab`, `Ciede2000`; `Palette` (GIMP `.gpl`) |
 | `graphics/` | `pixie::graphics` | `Image` (pixel buffer, no IO); `Mask` + `DetectBackground`/`ToggleRegion`/`ApplyMask`; `CropRect`, `CropImage`, `CenteredRectWithAspect`; `ResizeNearest`, `MakeThumbnail`; `RemapToPalette`, `BinarizeAlpha`, `RemoveTransparency` |
 | `formats/` | `pixie::formats` | `LoadImageFile`, `SavePng`, `SaveAseprite`, `SaveAsepriteAnimation` (stb_image); Aseprite reader (all frames, layers, tags, linked/compressed cels) and writer (one layer, N equal-size frames); `ReadWholeFile`/`WriteWholeFile` |
-| `audio/` | `pixie::audio` | `AudioClip`, `LoadClip` (WAV/MP3/FLAC via miniaudio, Ogg via stb_vorbis), `ComputeWaveform`; `SilenceTrim`, `LoopMaker`, `WavWrite` (`FindSoundRange`, `TrimWavFile`) |
-| `library/` | `pixie::library` | `Asset`, `AssetKind`, `ScanFolder`; `VariationGroupKey`, `BuildGridTiles` |
+| `audio/` | `pixie::audio` | `AudioClip`, `LoadClip` (WAV/MP3/FLAC via miniaudio, Ogg via stb_vorbis), `ComputeWaveform`; `SilenceTrim`, `LoopMaker`, `WavWrite` (`FindSoundRange`, `TrimWavFile`); `OggWrite` (`SaveOgg`, libvorbis, `HasOggFormat`), `Resample` (`ToStereo`, `ResampleClip`), `Normalize` (peak) |
+| `library/` | `pixie::library` | `Asset`, `AssetKind` (Image, Sfx, Music), `ScanFolder`; `VariationGroupKey`, `BuildGridTiles` |
 | `spritesheet/` | `pixie::spritesheet` | `Build`: packs Aseprite frames into an atlas + layout JSON |
 
 ### app/
@@ -72,6 +72,8 @@ Application
 
 ## Key concepts
 
+- **Audio category**: audio in a folder named `Music` (any depth, any case) is `AssetKind::Music`, any other audio is `AssetKind::Sfx`.
+  Moving a file between folders changes its category and its key.
 - **Asset**: one logical item. An image asset joins `hero.png` (base) and
   `hero.aseprite` (converted) from the same folder. Each audio file is its own asset.
 - **Asset key**: `lowercase folder + "/" + lowercase name`, plus the extension for
@@ -115,13 +117,17 @@ Application
 - **Make Loopable**: the panel swaps `clip_` for `audio::MakeLoopable(original, crossfade)`
   (the tail is blended into the head with an equal-power crossfade, so the clip gets shorter),
   plays it looped as a preview, and Apply writes it over the WAV via a temp file + rename.
-- **MP3 to WAV**: every `AppContext::RescanLibrary` decodes MP3s with `audio::LoadClip`,
-  writes a 16-bit `.wav` beside each (`audio::SaveWav`), deletes the MP3, rescans and
-  renames its key in every project to the WAV's key.
+- **Audio import conversion**: every `AppContext::RescanLibrary` runs `ImportAudio` over the audio assets.
+  Music is kept as stereo 44.1 kHz Ogg Vorbis (quality 0.5); SFX as 16-bit PCM stereo 44.1 kHz `.wav` whose peak
+  is normalized to -1 dBFS. Files in another format are decoded with `audio::LoadClip`, converted
+  (`ConvertToStandardFormat`: stereo + windowed-sinc resample), written beside the original (`SaveOgg` / `SaveWav`) and the
+  original is deleted; project keys are renamed to the new file's key. A `.wav`/`.ogg` that already is the right
+  category format but has another layout (`HasWavFormat`/`HasOggFormat`) or loudness is rewritten in place through a temp
+  file. If the target file already exists the original is kept and a failure is reported.
 - **Project export**: `services::ExportProject` asks for a folder. The active project's
   `.aseprite` files go through `spritesheet::Build` and are written as
-  `atlas.png` plus `atlas.json` (read by the Godot importer); its audio
-  files are copied into `<folder>/SFX/`.
+  `atlas.png` plus `atlas.json` (read by the Godot importer); its SFX files are copied into
+  `<folder>/SFX/` and its music files into `<folder>/Music/`.
 
 ## Threading
 
